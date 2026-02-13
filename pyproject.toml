@@ -1,0 +1,17 @@
+[project]
+name = "akp"
+version = "0.1.0"
+description = "Attention kernel portability across GPU architectures and inference regimes"
+requires-python = ">=3.10"
+dependencies = ["torch", "triton", "pandas", "pyarrow", "scipy", "matplotlib", "seaborn"]
+
+[project.optional-dependencies]
+kernels = ["flash-attn", "flashinfer-python"]
+dash = ["streamlit", "plotly"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["akp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

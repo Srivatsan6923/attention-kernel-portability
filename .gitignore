@@ -1,0 +1,9 @@
+results/raw/
+results/processed/
+results/dispatch.jsonl
+__pycache__/
+*.pyc
+.venv/
+*.ncu-rep
+*.nsys-rep
+Attention_Kernel_Portability_Project_Plan.docx

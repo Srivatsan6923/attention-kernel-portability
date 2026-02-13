@@ -1,0 +1,25 @@
+{
+  "gpu_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "gpu_uuid": "37b3d656-d66e-e034-8114-6a617a71e92d",
+  "cc_major": 8,
+  "cc_minor": 9,
+  "sm_count": 24,
+  "total_memory_gb": 8.59,
+  "l2_bytes": 33554432,
+  "theoretical_bw_gbs": 256.0,
+  "torch": "2.10.0+cu128",
+  "cuda": "12.8",
+  "versions": {
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "triton": "3.6.0",
+    "flash_attn": null,
+    "flashinfer": null,
+    "flash_attn_interface": null
+  },
+  "git_sha": "a773b52",
+  "event_overhead_us": 4.096,
+  "measured_peak_bw_gbs": 194.4,
+  "driver": "571.96",
+  "timestamp": 1788047194.7746851
+}
