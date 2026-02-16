@@ -280,6 +280,9 @@ def main(argv=None):
                     help="interleaved measurement rounds per cell")
     ap.add_argument("--reps", type=int, default=30)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--prewarm", action="store_true",
+                    help="build and run each cell once to fill the compile "
+                         "caches, then exit without writing rows")
     a = ap.parse_args(argv)
 
     if not torch.cuda.is_available():
@@ -309,6 +312,27 @@ def main(argv=None):
         a.grid, a.repeat, len(done)), flush=True)
 
     cfgs = grid(a.grid)
+
+    if a.prewarm:
+        # Inductor autotune and FlashInfer JIT dominate wall time and are paid
+        # per shape. Doing them once here keeps them out of the timed repeats.
+        for ci, cfg in enumerate(cfgs):
+            for impl in impls_for(cfg.regime):
+                if not impl.supports(cfg, dev_info) or not impl_applies(impl.name, cfg):
+                    continue
+                try:
+                    impl.build(cfg, device).fn()
+                    torch.cuda.synchronize()
+                except Exception as exc:
+                    print("[akp] prewarm skip {} {}: {}".format(
+                        impl.name, cfg.key(), type(exc).__name__), flush=True)
+                finally:
+                    torch.cuda.empty_cache()
+            print("[akp] prewarm {}/{} {}".format(ci + 1, len(cfgs), cfg.key()),
+                  flush=True)
+        print("[akp] prewarm done, caches populated")
+        return
+
     rng = random.Random(1234 + a.repeat)
     n_new = 0
     t0 = time.time()

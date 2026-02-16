@@ -321,8 +321,11 @@ def _p2d(cfg, device):
     return _sdpa_impl(cfg, device, SDPBackend.CUDNN_ATTENTION, enable_gqa=True)
 
 
+# N >= 128 because the tutorial autotunes over BLOCK_M in [64, 128] and writes a
+# whole tile: at N < BLOCK_M it runs past the end of the output. Which config
+# autotune picks varies per process, so shorter sequences fail intermittently.
 @register("P3-triton", "prefill", (r"_attn_fwd|_attn_bwd",),
-          supports=lambda cfg, dev: cfg.D in (16, 32, 64, 128, 256),
+          supports=lambda cfg, dev: cfg.D in (16, 32, 64, 128, 256) and cfg.N >= 128,
           note="vendored Triton tutorial-06; JIT-retargeted per device; MHA only")
 def _p3(cfg, device):
     from akp.vendor.triton_tutorial06 import attention as triton_attention

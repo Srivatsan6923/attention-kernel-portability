@@ -17,9 +17,9 @@
     "flashinfer": null,
     "flash_attn_interface": null
   },
-  "git_sha": "a773b52",
-  "event_overhead_us": 4.096,
-  "measured_peak_bw_gbs": 194.4,
+  "git_sha": "03fb4f8",
+  "event_overhead_us": 6.144,
+  "measured_peak_bw_gbs": 195.6,
   "driver": "571.96",
-  "timestamp": 1788047194.7746851
+  "timestamp": 1788048853.2831554
 }

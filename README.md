@@ -40,6 +40,8 @@ torch 2.10 / triton 3.6):
     akp/run.py       grids, resume, interleaved measurement, status taxonomy
     akp/analysis.py  metrics, ranking inversions, dispatch audit, backend selector
     tests/           semantic checks for the failures that stay silent
+    env/Dockerfile   pinned image (torch 2.9, flash-attn, flashinfer)
+    scripts/         NRP job specs and the single-host sweep loop
 
 ## Running it
 
@@ -57,6 +59,33 @@ Process-level repeats are a shell loop, since each needs a fresh CUDA context:
 
 Runs are resumable. Rows are keyed by a config hash and appended as they are
 produced, so a killed sweep restarts where it stopped.
+
+`--prewarm` builds every cell once without timing or writing anything. Inductor
+autotune and FlashInfer JIT are paid per shape and dominate wall time, so doing
+them once up front keeps them out of the measured repeats.
+
+## Running on a cluster
+
+    docker build -f env/Dockerfile -t ghcr.io/<user>/akp:<tag> .
+    docker push ghcr.io/<user>/akp:<tag>
+
+On NRP/Nautilus, once per namespace:
+
+    kubectl apply -f scripts/nrp_storage.yaml
+
+Then per grid:
+
+    export IMAGE=ghcr.io/<user>/akp:<tag> GRID=prefill_full
+    envsubst < scripts/nrp_job.yaml | kubectl apply -f -
+
+That is a prewarm Job followed by an Indexed Job of five completions at
+parallelism four — one process repeat per pod, one A100 per pod. Jobs rather
+than interactive pods, since interactive pods are destroyed after six hours and
+a full grid takes longer than that.
+
+On a single host without Kubernetes (a rented H100, an Ada box):
+
+    scripts/run_gpu.sh prefill_full decode_full
 
 ## Method notes
 
@@ -88,5 +117,5 @@ clustered on process repeats, since repeats inside one process share clock state
 
 ## Status
 
-Harness complete and verified on the development GPU. Benchmark runs on A100,
-H100, and the held-out devices are pending.
+Harness verified on the development GPU. A100 sweeps next; H100 and the
+held-out devices after that.

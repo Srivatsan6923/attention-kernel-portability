@@ -1,0 +1,95 @@
+# Sweep one grid on A100, as a Job rather than an interactive pod: interactive
+# pods are destroyed after 6 h and a full grid takes longer than that.
+#
+#   export IMAGE=ghcr.io/<user>/akp:<tag> GRID=prefill_full
+#   envsubst < scripts/nrp_job.yaml | kubectl apply -f -
+#   kubectl logs -f job/akp-prewarm-$GRID
+#
+# The prewarm Job compiles every shape once into the shared cache and exits.
+# Run it to completion before the sweep, or the five repeats each pay Inductor
+# autotune and FlashInfer JIT separately, which dominates wall time.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: akp-prewarm-$GRID
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 21600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.product
+                    operator: In
+                    values: [NVIDIA-A100-SXM4-80GB]
+      containers:
+        - name: prewarm
+          image: $IMAGE
+          workingDir: /workspace
+          command: ["python", "-m", "akp.run"]
+          args: ["--grid", "$GRID", "--out", "/data/raw", "--prewarm"]
+          env:
+            - {name: PYTHONUNBUFFERED, value: "1"}
+          resources:
+            # nvcc and Inductor autotune are CPU-bound; a 4-core pod triples the
+            # compile bill. A100 is a named resource, not plain nvidia.com/gpu.
+            limits:   {cpu: "16", memory: 64Gi, ephemeral-storage: 100Gi, nvidia.com/a100: "1"}
+            requests: {cpu: "16", memory: 64Gi, ephemeral-storage: 100Gi, nvidia.com/a100: "1"}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: dshm, mountPath: /dev/shm}
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: akp-data}}
+        # /dev/shm defaults to 64 MB in a container, which torch trips over.
+        - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 8Gi}}
+---
+# Five process-level repeats across four A100s. Indexed completion gives each
+# pod its repeat number, and each repeat needs its own CUDA context anyway, so
+# one GPU per pod is the right split rather than 4 GPUs in one pod.
+#
+# Resumable: a pod that dies is rescheduled and skips the rows already written.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: akp-sweep-$GRID
+spec:
+  completions: 5
+  parallelism: 4
+  completionMode: Indexed
+  backoffLimit: 10
+  activeDeadlineSeconds: 172800
+  template:
+    spec:
+      restartPolicy: OnFailure
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.product
+                    operator: In
+                    values: [NVIDIA-A100-SXM4-80GB]
+      containers:
+        - name: sweep
+          image: $IMAGE
+          workingDir: /workspace
+          command: ["sh", "-c"]
+          args:
+            - python -m akp.run --grid $GRID --out /data/raw
+              --repeat "$JOB_COMPLETION_INDEX"
+          # Indexed Jobs get JOB_COMPLETION_INDEX from the kubelet.
+          env:
+            - {name: PYTHONUNBUFFERED, value: "1"}
+          resources:
+            limits:   {cpu: "16", memory: 64Gi, ephemeral-storage: 100Gi, nvidia.com/a100: "1"}
+            requests: {cpu: "16", memory: 64Gi, ephemeral-storage: 100Gi, nvidia.com/a100: "1"}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: dshm, mountPath: /dev/shm}
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: akp-data}}
+        - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 8Gi}}
