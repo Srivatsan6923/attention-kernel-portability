@@ -9,13 +9,13 @@
 
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
-ARG TORCH_VERSION=2.9.0
-ARG FLASH_ATTN_VERSION=2.8.3.post1
-ARG FLASHINFER_VERSION=0.2.6
-
+# The wheels here are several GB; on a slow link the default single attempt and
+# short socket timeout lose a whole layer to one stall.
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_RETRIES=10 \
+    PIP_DEFAULT_TIMEOUT=120
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-dev git ca-certificates curl \
@@ -25,27 +25,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # PEP 668: this image is the environment, so installing into it is intended.
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
+# Each ARG sits directly above the step that uses it: declaring them together at
+# the top means bumping any one version invalidates every layer below it.
+# torch gets its own layer so a hiccup fetching anything else does not throw
+# away three gigabytes of CUDA wheels.
+ARG TORCH_VERSION=2.9.0
 RUN pip install --index-url https://download.pytorch.org/whl/cu128 \
-        torch==${TORCH_VERSION} \
-    && pip install \
-        numpy pandas pyarrow scipy scikit-learn matplotlib seaborn pytest
+        torch==${TORCH_VERSION}
 
-# Derive the wheel name from the interpreter and the installed torch instead of
-# hardcoding it: the cxx11 ABI flag tracks how torch itself was built and has
-# changed between releases. A wrong guess then fails here rather than silently
-# falling back to a source build.
-RUN python - <<'PY' > /tmp/wheel_url && pip install "$(cat /tmp/wheel_url)"
-import sys, torch
-ver = "${FLASH_ATTN_VERSION}"
-torch_mm = ".".join(torch.__version__.split("+")[0].split(".")[:2])
-abi = "TRUE" if torch._C._GLIBCXX_USE_CXX11_ABI else "FALSE"
-py = "cp%d%d" % sys.version_info[:2]
-name = (f"flash_attn-{ver}+cu12torch{torch_mm}cxx11abi{abi}"
-        f"-{py}-{py}-linux_x86_64.whl")
-print(f"https://github.com/Dao-AILab/flash-attention/releases/download/"
-      f"v{ver}/{name}")
-PY
+# Pinned: analysis.py is written against these, and pandas has changed
+# behaviour across majors.
+RUN pip install \
+        numpy==2.3.5 pandas==3.0.1 pyarrow==25.0.1 scipy==1.17.1 \
+        scikit-learn==1.8.0 matplotlib==3.10.8 pytest==8.4.2
 
+# Look the wheel up in the release instead of constructing its filename. The
+# cxx11 ABI flag tracks how torch was built, and the version inside the wheel
+# name does not always match the release tag (v2.8.3.post1 ships 2.8.3 wheels),
+# so a constructed name is a 404 waiting to happen. Resolving it against the
+# release means a missing combination fails here, loudly, rather than at
+# benchmark time.
+ARG FLASH_ATTN_TAG=v2.8.3
+ENV FLASH_ATTN_TAG=${FLASH_ATTN_TAG}
+COPY env/resolve_flash_attn.py /tmp/resolve_flash_attn.py
+RUN python /tmp/resolve_flash_attn.py > /tmp/wheel_url \
+    && cat /tmp/wheel_url \
+    && pip install "$(cat /tmp/wheel_url)"
+
+# flashinfer-python ships a pure-Python wheel and JIT-compiles kernels on first
+# use. Older versions are sdist-only, and pip then builds them in an isolated
+# environment that re-downloads torch.
+ARG FLASHINFER_VERSION=0.6.18
 RUN pip install flashinfer-python==${FLASHINFER_VERSION}
 
 # Compile caches live on the mounted volume so the five process repeats and any

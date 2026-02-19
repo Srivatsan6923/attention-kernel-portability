@@ -20,8 +20,13 @@ import triton.testing as tt
 
 def device_info(index: int = 0) -> dict:
     p = torch.cuda.get_device_properties(index)
-    # Theoretical peak: DDR transfers twice per clock.  memory_clock_rate is kHz.
-    peak_bw = p.memory_clock_rate * 1e3 * 2 * (p.memory_bus_width / 8) / 1e9
+    # Theoretical peak: DDR transfers twice per clock, memory_clock_rate is kHz.
+    # Both attributes only exist from torch 2.10, so this is None on older
+    # builds and bandwidth utilisation falls back to the measured copy figure.
+    clock = getattr(p, "memory_clock_rate", None)
+    width = getattr(p, "memory_bus_width", None)
+    peak_bw = (round(clock * 1e3 * 2 * (width / 8) / 1e9, 1)
+               if clock and width else None)
     return {
         "gpu_name": p.name,
         "gpu_uuid": str(getattr(p, "uuid", "")),
@@ -30,7 +35,7 @@ def device_info(index: int = 0) -> dict:
         "sm_count": p.multi_processor_count,
         "total_memory_gb": round(p.total_memory / 1e9, 2),
         "l2_bytes": int(p.L2_cache_size),
-        "theoretical_bw_gbs": round(peak_bw, 1),
+        "theoretical_bw_gbs": peak_bw,
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
     }

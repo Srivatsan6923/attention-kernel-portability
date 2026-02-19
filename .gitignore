@@ -7,3 +7,4 @@ __pycache__/
 *.ncu-rep
 *.nsys-rep
 Attention_Kernel_Portability_Project_Plan.docx
+.buildlog.txt

@@ -25,7 +25,9 @@ PRACTICAL = 1.10                     # ratio that counts as a practical inversio
 # Load and derive
 # --------------------------------------------------------------------------- #
 
-def load(raw="results/raw", dispatch="results/dispatch.jsonl") -> pd.DataFrame:
+def load(raw="results/raw", dispatch=None) -> pd.DataFrame:
+    dispatch = dispatch or os.path.join(os.path.dirname(raw.rstrip("/\\")),
+                                       "dispatch.jsonl")
     rows = [json.loads(l)
             for f in glob.glob(os.path.join(raw, "*", "*.jsonl"))
             for l in open(f, encoding="utf8")]
@@ -241,44 +243,82 @@ def selector(cells: pd.DataFrame, meta: dict, max_depth=4) -> dict:
 
 # --------------------------------------------------------------------------- #
 
+def environments(path="results/environment"):
+    out = {}
+    for f in glob.glob(os.path.join(path, "*.json")):
+        m = json.load(open(f, encoding="utf8"))
+        out[m["gpu_name"]] = m
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("raw", nargs="?", default="results/raw")
     ap.add_argument("--out", default="results/processed")
     a = ap.parse_args(argv)
 
+    from akp.impls import IMPLS
+
     df = load(a.raw)
-    os.makedirs(a.out, exist_ok=True)
-    df.to_parquet(os.path.join(a.out, "rows.parquet"))
     cells = per_cell_median(usable(df))
-    cells.drop(columns=["samples"]).to_parquet(os.path.join(a.out, "cells.parquet"))
+    env = environments()
+    os.makedirs(a.out, exist_ok=True)
+
+    def write(name, obj):
+        path = os.path.join(a.out, name)
+        if name.endswith(".json"):
+            json.dump(obj, open(path, "w", encoding="utf8"), indent=2, default=str)
+        else:
+            obj.to_parquet(path)
+
+    write("rows.parquet", df)
+    write("cells.parquet", cells.drop(columns=["samples"]))
+
+    audit = dispatch_audit(df, IMPLS)
+    write("dispatch_audit.parquet", audit)
 
     gpus = sorted(set(df.gpu_name))
-    print(f"{len(df)} rows | {len(cells)} (gpu, cell, impl) medians | GPUs: {gpus}")
-    print("\nstatus:")
-    print(df.status.value_counts().to_string())
-
-    from akp.impls import IMPLS
-    audit = dispatch_audit(df, IMPLS)
-    if len(audit):
-        miss = 1 - audit.matched.mean()
-        print(f"\ndispatch: requested backend not observed in "
-              f"{miss:.1%} of {len(audit)} measured cells")
-        print(audit.groupby("implementation").matched.mean().to_string())
-
-    print("\nwinners by implementation:")
-    print(winners(cells).implementation.value_counts().to_string())
-
+    inv = []
+    pairs = {}
     for i, g1 in enumerate(gpus):
         for g2 in gpus[i + 1:]:
-            inv = inversions(cells, g1, g2)
-            rc = rank_correlation(cells, g1, g2)
-            n = rc["n_cells"] or 1
-            print(f"\n{g1} vs {g2}: spearman={rc['spearman_median']:.3f} "
-                  f"over {rc['n_cells']} cells")
-            if len(inv):
-                print(f"  practical inversions: {inv.practical.sum()} "
-                      f"({inv.practical.sum() / n:.1%} of cells)")
+            d = inversions(cells, g1, g2)
+            if len(d):
+                d["gpu_a"], d["gpu_b"] = g1, g2
+                inv.append(d)
+            pairs[g1 + " vs " + g2] = rank_correlation(cells, g1, g2)
+    write("inversions.parquet",
+          pd.concat(inv, ignore_index=True) if inv else pd.DataFrame())
+
+    meta = {g: {"cc": float(str(m["cc_major"]) + "." + str(m["cc_minor"])),
+                "bw": (m.get("measured_peak_bw_gbs")
+                       or m.get("theoretical_bw_gbs") or 0.0)}
+            for g, m in env.items()}
+    sel = selector(cells, meta) if len(gpus) > 1 and meta else {"error": "need >1 GPU"}
+    write("selector.json", sel)
+
+    summary = {
+        "n_rows": int(len(df)),
+        "n_cells": int(len(cells)),
+        "gpus": gpus,
+        "status": df.status.value_counts().to_dict(),
+        "dispatch_mismatch_rate": (float(1 - audit.matched.mean())
+                                   if len(audit) else None),
+        "winners": winners(cells).implementation.value_counts().to_dict(),
+        "rank_correlation": pairs,
+        "environment": env,
+    }
+    write("summary.json", summary)
+
+    print(len(df), "rows |", len(cells), "cell medians | GPUs:", gpus)
+    print(df.status.value_counts().to_string())
+    if len(audit):
+        print("dispatch mismatch: {:.1%} of {} measured cells".format(
+            1 - audit.matched.mean(), len(audit)))
+    for k, v in pairs.items():
+        print("{}: spearman {:.3f} over {} cells".format(
+            k, v["spearman_median"], v["n_cells"]))
+    print("wrote", a.out)
 
 
 if __name__ == "__main__":

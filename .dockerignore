@@ -1,0 +1,13 @@
+.git
+.gitignore
+results
+notebooks
+paper
+.cache
+__pycache__
+*.pyc
+.pytest_cache
+*.ncu-rep
+*.nsys-rep
+*.docx
+*.pdf

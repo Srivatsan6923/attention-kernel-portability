@@ -298,7 +298,9 @@ def main(argv=None):
     Path("results/environment/" + slug + ".json").write_text(
         json.dumps(manifest(device), indent=2))
 
-    dispatch = DispatchTable("results/dispatch.jsonl")
+    # Beside the raw shards, not a fixed path: on a cluster the rows go to a
+    # mounted volume and a hardcoded path would leave the traces in the container.
+    dispatch = DispatchTable(Path(a.out).parent / "dispatch.jsonl")
     shard = outdir / (a.grid + "_" + (a.impl or "all") + "_r" + str(a.repeat) + ".jsonl")
     done = set()
     if shard.exists() and not a.force:

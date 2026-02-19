@@ -40,6 +40,7 @@ torch 2.10 / triton 3.6):
     akp/run.py       grids, resume, interleaved measurement, status taxonomy
     akp/analysis.py  metrics, ranking inversions, dispatch audit, backend selector
     tests/           semantic checks for the failures that stay silent
+    dashboard/app.py results dashboard
     env/Dockerfile   pinned image (torch 2.9, flash-attn, flashinfer)
     scripts/         NRP job specs and the single-host sweep loop
 
@@ -86,6 +87,17 @@ a full grid takes longer than that.
 On a single host without Kubernetes (a rented H100, an Ada box):
 
     scripts/run_gpu.sh prefill_full decode_full
+
+## Dashboard
+
+    pip install -e ".[dash]"
+    python -m akp.analysis          # writes results/processed/
+    streamlit run dashboard/app.py
+
+Seven pages: hardware and environment, prefill, decode, dispatch and fallbacks,
+ranking inversions, Nsight attribution, and backend selection. It reads
+`results/processed/` and recomputes nothing, so a number here and the same
+number in the report cannot disagree.
 
 ## Method notes
 
