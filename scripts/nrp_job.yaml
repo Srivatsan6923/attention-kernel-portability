@@ -1,28 +1,50 @@
 # Sweep one grid on A100, as a Job rather than an interactive pod: interactive
 # pods are destroyed after 6 h and a full grid takes longer than that.
 #
-#   export IMAGE=ghcr.io/<user>/akp:<tag> GRID=prefill_full
-#   envsubst < scripts/nrp_job.yaml | kubectl apply -f -
-#   kubectl logs -f job/akp-prewarm-$GRID
+#   IMAGE=ghcr.io/<user>/akp:v1 scripts/nrp_launch.sh prefill_full 2 2
 #
-# The prewarm Job compiles every shape once into the shared cache and exits.
-# Run it to completion before the sweep, or the five repeats each pay Inductor
-# autotune and FlashInfer JIT separately, which dominates wall time.
+# Use that script, not plain `envsubst`: envsubst blanks every variable it
+# knows, including the JOB_COMPLETION_INDEX that has to survive into the pod.
+# The script passes an explicit variable list.
+#
+# NSHARDS splits the grid across pods and PAR is how many run at once. Set PAR
+# to the A100 quota actually free -- the namespace is shared, so check with
+#   kubectl describe resourcequota a100-limit -n <ns>
+# before launching. Pods over quota just sit Pending, which is harmless but
+# looks like a hang.
+#
+# Run the prewarm Job to completion first. It compiles every shape once into
+# the shared cache; without it each of the five repeats pays Inductor autotune
+# and FlashInfer JIT again, and that dominates wall time.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: akp-prewarm-$GRID
+  name: akp-prewarm-$JOBNAME
 spec:
-  backoffLimit: 2
-  activeDeadlineSeconds: 21600
+  completions: $NSHARDS
+  parallelism: $PAR
+  completionMode: Indexed
+  backoffLimitPerIndex: 2
+  maxFailedIndexes: 1
+  # Preemptions and node drains are not our bug; do not spend the retry
+  # budget on them.
+  podFailurePolicy:
+    rules:
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
+  activeDeadlineSeconds: 43200
   template:
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
+                  # The cluster also has A100-PCIE-40GB and MIG-1g.10gb nodes.
+                  # Benchmarking one of those and calling it the anchor would
+                  # invalidate every cross-device comparison.
                   - key: nvidia.com/gpu.product
                     operator: In
                     values: [NVIDIA-A100-SXM4-80GB]
@@ -30,8 +52,11 @@ spec:
         - name: prewarm
           image: $IMAGE
           workingDir: /workspace
-          command: ["python", "-m", "akp.run"]
-          args: ["--grid", "$GRID", "--out", "/data/raw", "--prewarm"]
+          command: ["sh", "-c"]
+          args:
+            - python -m akp.run --grid $GRID --out /data/raw --prewarm
+              --require-gpu A100-SXM4-80GB
+              --shard "${JOB_COMPLETION_INDEX:?not an indexed job}" --nshards $NSHARDS
           env:
             - {name: PYTHONUNBUFFERED, value: "1"}
           resources:
@@ -47,24 +72,33 @@ spec:
         # /dev/shm defaults to 64 MB in a container, which torch trips over.
         - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 8Gi}}
 ---
-# Five process-level repeats across four A100s. Indexed completion gives each
-# pod its repeat number, and each repeat needs its own CUDA context anyway, so
-# one GPU per pod is the right split rather than 4 GPUs in one pod.
+# Five process-level repeats, each split into NSHARDS config shards. Each pod
+# keeps every implementation for its own configs, so the interleaving that makes
+# clock drift common-mode across compared implementations is preserved.
 #
-# Resumable: a pod that dies is rescheduled and skips the rows already written.
+# Resumable: a pod that dies is rescheduled and skips rows already written.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: akp-sweep-$GRID
+  name: akp-sweep-$JOBNAME
 spec:
-  completions: 5
-  parallelism: 4
+  completions: $COMPLETIONS
+  parallelism: $PAR
   completionMode: Indexed
-  backoffLimit: 10
-  activeDeadlineSeconds: 172800
+  # Per-index, so one genuinely broken shard cannot abort the campaign.
+  backoffLimitPerIndex: 3
+  maxFailedIndexes: 2
+  # Preemptions and node drains are not our bug; do not spend the retry
+  # budget on them.
+  podFailurePolicy:
+    rules:
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
+  activeDeadlineSeconds: 259200
   template:
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -80,8 +114,8 @@ spec:
           command: ["sh", "-c"]
           args:
             - python -m akp.run --grid $GRID --out /data/raw
-              --repeat "$JOB_COMPLETION_INDEX"
-          # Indexed Jobs get JOB_COMPLETION_INDEX from the kubelet.
+              --require-gpu A100-SXM4-80GB
+              --index "${JOB_COMPLETION_INDEX:?not an indexed job}" --nshards $NSHARDS
           env:
             - {name: PYTHONUNBUFFERED, value: "1"}
           resources:

@@ -103,8 +103,14 @@ def grid(name):
                      "decode_full decode_cudagraph decode_cold profile")
 
 
-# D1 runs as a strip, not the full grid: decode is bandwidth-bound so its
-# ranking is predictable, while its compile cost across 240 shapes is not.
+# Compiled implementations run on strips rather than the full grid. Inductor
+# autotunes per shape and that dominates wall time, so the rule is: run it
+# everywhere only if the answer it gives varies with shape.
+#
+#   D1-inductor         decode is bandwidth-bound, so its ranking is predictable
+#   P1-inductor-nofuse  these two exist to answer whether Inductor rewrites the
+#   P1-inductor-where   naive form into SDPA, which is a property of the spelling
+#                       and not of B or N
 D1_STRIP = {(1, 128, 8), (32, 128, 8)}
 
 
@@ -112,6 +118,9 @@ def impl_applies(impl_name, cfg):
     if impl_name == "D1-inductor":
         return ((cfg.B, cfg.D, cfg.Hkv) in D1_STRIP
                 and cfg.N in (512, 2048, 8192) and cfg.dtype == "bf16")
+    if impl_name in ("P1-inductor-nofuse", "P1-inductor-where"):
+        return (cfg.B == 4 and cfg.D == 128 and cfg.dtype == "bf16"
+                and cfg.mode == "fwd" and cfg.N in (512, 2048, 4096))
     return True
 
 
@@ -120,6 +129,12 @@ def impl_applies(impl_name, cfg):
 # --------------------------------------------------------------------------- #
 
 def git_sha():
+    # Baked in at image build: /workspace is not a repo, so without this every
+    # cluster row shares one sha and a rebuilt image resumes onto stale rows
+    # rather than re-measuring them.
+    env = os.environ.get("AKP_GIT_SHA")
+    if env:
+        return env
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                               capture_output=True, text=True,
@@ -184,6 +199,8 @@ class DispatchTable:
                 fh.write(json.dumps({"dispatch_id": did, "implementation": impl,
                                      "gpu_name": gpu, "n_kernels": trace.count("|") + 1,
                                      "kernels": trace}) + chr(10))
+                fh.flush()
+                os.fsync(fh.fileno())
         return did
 
 
@@ -202,7 +219,7 @@ NAIVE_LIKE = ("P0-naive", "P1-inductor", "P1-inductor-nofuse",
 GATED = set()   # one correctness gate per equivalence class, not per cell
 
 
-def run_cell(impl, cfg, device, dev_info, reps):
+def run_cell(impl, cfg, device, dev_info, reps, full=True):
     row = {"implementation": impl.name, "status": "OK"}
 
     if not impl.supports(cfg, dev_info) or not impl_applies(impl.name, cfg):
@@ -231,8 +248,11 @@ def run_cell(impl, cfg, device, dev_info, reps):
                                   built.meta.get("out_layout", "bhsd"),
                                   fn=built.fn))
         row["gate_class"] = "|".join(str(x) for x in cls)
-        row["dispatch_trace"] = check.dispatch_probe(built.fn)
-        row.update(bench.peak_memory_mb(built.fn, device))
+        # The launched kernels and the peak allocation are properties of the
+        # cell, not of the round, so only the first round pays for them.
+        if full:
+            row["dispatch_trace"] = check.dispatch_probe(built.fn)
+            row.update(bench.peak_memory_mb(built.fn, device))
         row.update(bench.measure(built.fn, cfg, device, reps=reps))
 
         if not row.get("correctness_pass", True):
@@ -276,32 +296,56 @@ def main(argv=None):
     ap.add_argument("--out", default="results/raw")
     ap.add_argument("--repeat", type=int, default=0,
                     help="process-level repeat index; part of the config hash")
-    ap.add_argument("--rounds", type=int, default=3,
-                    help="interleaved measurement rounds per cell")
+    ap.add_argument("--rounds", type=int, default=1,
+                    help="interleaved measurement rounds per cell. One is "
+                         "usually right: implementation order is already "
+                         "shuffled per configuration, the five process repeats "
+                         "supply the replication, and the bootstrap clusters on "
+                         "processes anyway. Extra rounds re-pay the build.")
     ap.add_argument("--reps", type=int, default=30)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--require-gpu", default=None,
+                    help="refuse to run unless the device name contains this; "
+                         "the cluster also has 40GB PCIe and MIG A100s and "
+                         "silently benchmarking one would corrupt the anchor")
+    ap.add_argument("--index", type=int, default=None,
+                    help="single task index; repeat and shard are derived as "
+                         "index // nshards and index %% nshards, so a k8s "
+                         "Indexed Job needs no shell arithmetic")
+    ap.add_argument("--shard", type=int, default=0)
+    ap.add_argument("--nshards", type=int, default=1,
+                    help="split the grid across pods; each shard keeps every "
+                         "implementation for its configs, so the interleaving "
+                         "that makes drift common-mode is preserved")
     ap.add_argument("--prewarm", action="store_true",
                     help="build and run each cell once to fill the compile "
                          "caches, then exit without writing rows")
     a = ap.parse_args(argv)
 
+    if a.index is not None:
+        a.repeat, a.shard = divmod(a.index, a.nshards)
+
     if not torch.cuda.is_available():
         raise SystemExit("no CUDA device")
     device = torch.device("cuda", 0)
     dev_info = bench.device_info(device)
+    if a.require_gpu and a.require_gpu.lower() not in dev_info["gpu_name"].lower():
+        raise SystemExit("expected a GPU matching %r, got %r"
+                         % (a.require_gpu, dev_info["gpu_name"]))
     sha = git_sha()
 
     slug = dev_info["gpu_name"].replace(" ", "-").replace("/", "-")
     outdir = Path(a.out) / slug
     outdir.mkdir(parents=True, exist_ok=True)
-    Path("results/environment").mkdir(parents=True, exist_ok=True)
-    Path("results/environment/" + slug + ".json").write_text(
-        json.dumps(manifest(device), indent=2))
+    envdir = Path(a.out).parent / "environment"
+    envdir.mkdir(parents=True, exist_ok=True)
+    (envdir / (slug + ".json")).write_text(json.dumps(manifest(device), indent=2))
 
     # Beside the raw shards, not a fixed path: on a cluster the rows go to a
     # mounted volume and a hardcoded path would leave the traces in the container.
     dispatch = DispatchTable(Path(a.out).parent / "dispatch.jsonl")
-    shard = outdir / (a.grid + "_" + (a.impl or "all") + "_r" + str(a.repeat) + ".jsonl")
+    shard = outdir / (a.grid + "_" + (a.impl or "all") + "_r" + str(a.repeat)
+                      + "_s" + str(a.shard) + ".jsonl")
     done = set()
     if shard.exists() and not a.force:
         for line in shard.open(encoding="utf8"):
@@ -313,7 +357,14 @@ def main(argv=None):
         dev_info["gpu_name"], dev_info["cc_major"], dev_info["cc_minor"],
         a.grid, a.repeat, len(done)), flush=True)
 
+    # Shuffle before sharding. The grid is generated by itertools.product with
+    # mode and dtype innermost, so a plain i % nshards split would put every
+    # fwd config on one node and every fwd_bwd on another -- confounding two of
+    # the axes under study with node identity. The seed is fixed so the split is
+    # identical on a resumed pod.
     cfgs = grid(a.grid)
+    random.Random(20260218).shuffle(cfgs)
+    cfgs = [c for i, c in enumerate(cfgs) if i % a.nshards == a.shard]
 
     if a.prewarm:
         # Inductor autotune and FlashInfer JIT dominate wall time and are paid
@@ -350,12 +401,13 @@ def main(argv=None):
 
             # Shuffle each round so drift is common-mode across impls.
             per_impl = {i.name: [] for i in pending}
-            for _ in range(a.rounds):
+            for r in range(a.rounds):
                 order = list(pending)
                 rng.shuffle(order)
                 for impl in order:
                     per_impl[impl.name].append(
-                        run_cell(impl, cfg, device, dev_info, a.reps))
+                        run_cell(impl, cfg, device, dev_info, a.reps,
+                                 full=(r == 0)))
 
             for impl in pending:
                 rows = per_impl[impl.name]
@@ -364,6 +416,22 @@ def main(argv=None):
                     merged = dict(sorted(ok, key=lambda r: r["median_us"])[len(ok) // 2])
                 else:
                     merged = dict(rows[0])
+                # Only round 0 carries the gate, the probe and the peak
+                # allocation. Carry them across, and let a gate failure win over
+                # the merged status -- otherwise a failing round 0 is dropped
+                # from `ok` and a later ungated round is written as OK.
+                for k, v in rows[0].items():
+                    merged.setdefault(k, v)
+                gated = next((r for r in rows if "correctness_pass" in r), None)
+                if gated is not None:
+                    for k, v in gated.items():
+                        if k.endswith("_err") or k in (
+                                "correctness_pass", "pass_relative",
+                                "pass_tolerance", "tau_dtype", "cosine_sim",
+                                "failed_tensor", "gate_class", "has_nonfinite"):
+                            merged[k] = v
+                    if not gated["correctness_pass"]:
+                        merged["status"] = "NUMERICAL_FAIL"
                 merged["round_median_us"] = [r.get("median_us") for r in rows]
                 trace = merged.pop("dispatch_trace", None)
                 if trace:

@@ -34,7 +34,12 @@ def load(raw="results/raw", dispatch=None) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if os.path.exists(dispatch):
         d = pd.DataFrame([json.loads(l) for l in open(dispatch, encoding="utf8")])
-        df = df.merge(d[["dispatch_id", "kernels"]], on="dispatch_id", how="left")
+        # Pods append concurrently, so the same dispatch_id can land more than
+        # once. Without the dedup the merge is many-to-many and silently
+        # duplicates result rows, which would tighten every bootstrap CI.
+        d = d.drop_duplicates("dispatch_id")
+        df = df.merge(d[["dispatch_id", "kernels"]], on="dispatch_id",
+                      how="left", validate="m:1")
     return derive(df)
 
 
@@ -70,8 +75,14 @@ def usable(df: pd.DataFrame) -> pd.DataFrame:
     """Rows allowed into a speed ranking: measured and correct."""
     ok = (df.status == "OK") & df.median_us.notna()
     if "correctness_pass" in df:
-        # NaN means covered by the class representative, not unchecked.
+        # The gate runs once per equivalence class, so most rows carry NaN.
+        # Disqualify the whole class its representative failed on -- otherwise a
+        # kernel that fails the gate loses one row and every other cell of that
+        # class still counts as correct.
         ok &= df.correctness_pass.fillna(True)
+        if "gate_class" in df:
+            failed = set(df.loc[df.correctness_pass == False, "gate_class"].dropna())
+            ok &= ~df.gate_class.isin(failed)
     return df[ok]
 
 
@@ -162,9 +173,15 @@ def dispatch_audit(df: pd.DataFrame, impls) -> pd.DataFrame:
     for _, r in df[df.status == "OK"].iterrows():
         pats = impls[r.implementation].kernel_patterns
         k = r.get("kernels") or ""
+        # An unobserved probe is not a mismatch. Counting "we could not see the
+        # kernel" as "the wrong kernel ran" would inflate the headline number in
+        # the direction that flatters the hypothesis.
+        probed = bool(k) and not k.startswith("<")
         rows.append(dict(
             implementation=r.implementation, gpu_name=r.gpu_name, cell=r.cell,
-            matched=any(re.search(p, k, re.I) for p in pats),
+            probed=probed,
+            matched=(any(re.search(p, k, re.I) for p in pats) if probed
+                     else float("nan")),
             fused_into_sdpa=bool(r.get("fuse_attention", 0)),
             n_kernels=r.get("n_kernels", 0)))
     return pd.DataFrame(rows)
@@ -304,6 +321,8 @@ def main(argv=None):
         "status": df.status.value_counts().to_dict(),
         "dispatch_mismatch_rate": (float(1 - audit.matched.mean())
                                    if len(audit) else None),
+        "dispatch_probe_failures": (int((~audit.probed).sum())
+                                    if len(audit) else 0),
         "winners": winners(cells).implementation.value_counts().to_dict(),
         "rank_correlation": pairs,
         "environment": env,
@@ -313,8 +332,10 @@ def main(argv=None):
     print(len(df), "rows |", len(cells), "cell medians | GPUs:", gpus)
     print(df.status.value_counts().to_string())
     if len(audit):
-        print("dispatch mismatch: {:.1%} of {} measured cells".format(
-            1 - audit.matched.mean(), len(audit)))
+        print("dispatch mismatch: {:.1%} of {} probed cells "
+              "({} probes returned nothing)".format(
+                  1 - audit.matched.mean(), int(audit.probed.sum()),
+                  int((~audit.probed).sum())))
     for k, v in pairs.items():
         print("{}: spearman {:.3f} over {} cells".format(
             k, v["spearman_median"], v["n_cells"]))

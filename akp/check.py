@@ -161,7 +161,10 @@ def dispatch_probe(fn) -> str:
     # Select by device type, not attributed time: a short fused kernel can
     # report zero self-time and would look like it never dispatched.
     # acc_events=True stops the profiler clearing events each cycle.
-    for _ in range(2):
+    # CUPTI occasionally hands back an empty event set on the first profile in
+    # a process, and intermittently after that. Retry, and report the failure
+    # honestly rather than letting it read as "the wrong kernel ran".
+    for _ in range(4):
         try:
             try:
                 ctx = profile(activities=[ProfilerActivity.CUDA], acc_events=True)
@@ -176,4 +179,5 @@ def dispatch_probe(fn) -> str:
         names = {e.name for e in prof.events() if e.device_type == DeviceType.CUDA}
         if names:
             return "|".join(sorted(names))
+        torch.cuda.synchronize()
     return "<no-cuda-kernels>"

@@ -76,8 +76,7 @@ On NRP/Nautilus, once per namespace:
 
 Then per grid:
 
-    export IMAGE=ghcr.io/<user>/akp:<tag> GRID=prefill_full
-    envsubst < scripts/nrp_job.yaml | kubectl apply -f -
+    IMAGE=ghcr.io/<user>/akp:v1 scripts/nrp_launch.sh prefill_full 2 2
 
 That is a prewarm Job followed by an Indexed Job of five completions at
 parallelism four — one process repeat per pod, one A100 per pod. Jobs rather

@@ -63,7 +63,10 @@ RUN pip install flashinfer-python==${FLASHINFER_VERSION}
 # otherwise. scripts/nrp_job.yaml points these at the PVC.
 ENV TORCHINDUCTOR_CACHE_DIR=/data/cache/inductor \
     TRITON_CACHE_DIR=/data/cache/triton \
-    FLASHINFER_JIT_CACHE_DIR=/data/cache/flashinfer
+    FLASHINFER_WORKSPACE_BASE=/data/cache/flashinfer
+
+ARG GIT_SHA=unknown
+ENV AKP_GIT_SHA=${GIT_SHA}
 
 WORKDIR /workspace
 COPY pyproject.toml README.md ./
