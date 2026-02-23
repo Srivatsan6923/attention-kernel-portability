@@ -8,3 +8,5 @@ __pycache__/
 *.nsys-rep
 Attention_Kernel_Portability_Project_Plan.docx
 .buildlog.txt
+results/environment/
+results_container/

@@ -53,12 +53,12 @@ def load():
         p = os.path.join(PROCESSED, name)
         return json.load(open(p, encoding="utf8")) if os.path.exists(p) else {}
 
-    return (parquet("rows.parquet"), parquet("cells.parquet"),
-            parquet("dispatch_audit.parquet"), parquet("inversions.parquet"),
-            js("summary.json"), js("selector.json"))
+    return (parquet("rows.parquet"), parquet("dispatch_audit.parquet"),
+            parquet("inversions.parquet"), js("summary.json"),
+            js("selector.json"))
 
 
-rows, cells, audit, inv, summary, sel = load()
+rows, audit, inv, summary, sel = load()
 
 if rows.empty:
     st.error(f"No results in {PROCESSED}. Run a sweep, then `python -m akp.analysis`.")
@@ -125,11 +125,20 @@ if page == "Hardware & environment":
     st.write("Does the fastest attention implementation stay the fastest when "
              "the GPU or the workload regime changes?")
 
-    a, b, c = st.columns(3)
+    a, b, c, d = st.columns(4)
     a.metric("Measured rows", summary.get("n_rows", 0))
     b.metric("Configurations", summary.get("n_cells", 0))
     mm = summary.get("dispatch_mismatch_rate")
     c.metric("Dispatch mismatch", "n/a" if mm is None else f"{mm:.1%}")
+    wf = summary.get("winner_flips", {})
+    d.metric("Fastest impl changes",
+             f"{wf['flip_rate']:.1%}" if wf.get("n_cells") else "needs 2 GPUs",
+             help="share of matched configurations whose top-1 differs across GPUs")
+
+    sp = summary.get("spread_by_regime", {})
+    if sp:
+        st.caption("Slowest/fastest implementation ratio, median per regime: "
+                   + ", ".join(f"{k} {v}x" for k, v in sorted(sp.items())))
 
     st.subheader("Devices")
     env = summary.get("environment", {})
@@ -175,10 +184,14 @@ elif page in ("Prefill", "Decode"):
         line(df, "seq_len", "tokens_per_s", regime, "Tokens/s", log_y=False)
         line(df, "seq_len", "eff_bw_gbs", regime,
              "Effective KV bandwidth (GB/s)", log_y=False)
+        if df.get("bw_util") is not None and df.bw_util.notna().any():
+            line(df, "seq_len", "bw_util", regime,
+                 "Fraction of achievable memory bandwidth", log_y=False)
 
     st.subheader("Table")
     keep = [c for c in ["implementation", "seq_len", "batch", "head_dim", "dtype",
                         "median_us", "p5_us", "p95_us", "tflops", "eff_bw_gbs",
+                        "bw_util",
                         "peak_allocated_mb", "max_abs_err", "correctness_pass"]
             if c in df.columns]
     st.dataframe(df[keep].sort_values(["implementation", "seq_len"]),
@@ -202,6 +215,12 @@ elif page == "Dispatch & fallbacks":
 
         fused = audit[audit.fused_into_sdpa]
         st.metric("Cells where TorchInductor substituted SDPA", len(fused))
+
+        st.subheader("Requested vs executed backend")
+        st.caption("What actually ran. For SDPA the choice is the measurement, "
+                   "not a mismatch.")
+        st.dataframe(pd.crosstab(audit.implementation, audit.observed),
+                     use_container_width=True)
 
     st.subheader("Status by implementation")
     st.dataframe(pd.crosstab(rows.implementation, rows.status),

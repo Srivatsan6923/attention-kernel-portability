@@ -40,10 +40,11 @@ def load(raw="results/raw", dispatch=None) -> pd.DataFrame:
         d = d.drop_duplicates("dispatch_id")
         df = df.merge(d[["dispatch_id", "kernels"]], on="dispatch_id",
                       how="left", validate="m:1")
-    return derive(df)
+    envdir = os.path.join(os.path.dirname(raw.rstrip("/\\")), "environment")
+    return derive(df, environments(envdir))
 
 
-def derive(df: pd.DataFrame) -> pd.DataFrame:
+def derive(df: pd.DataFrame, env: dict | None = None) -> pd.DataFrame:
     itemsize = df["dtype"].map({"fp16": 2, "bf16": 2}).fillna(2)
     pre = df["regime"] == "prefill"
 
@@ -62,6 +63,16 @@ def derive(df: pd.DataFrame) -> pd.DataFrame:
     df["us_per_token"] = np.where(pre, np.nan, df.median_us)
     df["tokens_per_s"] = np.where(pre, np.nan, df.batch / (df.median_us * 1e-6))
 
+    # Fraction of the device's achievable bandwidth. Decode is bandwidth-bound,
+    # so this is what makes the prefill/decode contrast mean something rather
+    # than just being two different latencies.
+    def _peak(g):
+        m = (env or {}).get(g, {})
+        return m.get("measured_peak_bw_gbs") or m.get("theoretical_bw_gbs")
+
+    peak = df.gpu_name.map(_peak)
+    df["bw_util"] = df.eff_bw_gbs / peak
+
     # Cell identity: the workload shape, minus which impl ran.
     df["cell"] = (df.regime + "|B" + df.batch.astype(str) + "|Hq" + df.hq.astype(str)
                   + "|Hkv" + df.hkv.astype(str) + "|D" + df.head_dim.astype(str)
@@ -71,9 +82,45 @@ def derive(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def spread(cells: pd.DataFrame) -> pd.DataFrame:
+    """Slowest/fastest ratio per configuration.
+
+    Finding 2 is about how far apart the implementations are, and whether that
+    gap closes in decode; the winner alone cannot say that.
+    """
+    g = cells.groupby(["gpu_name", "cell"]).median_us
+    out = (g.max() / g.min()).rename("spread").reset_index()
+    out["regime"] = out.cell.str.split("|").str[0]
+    return out
+
+
+def observed_backend(kernels: str) -> str:
+    """Name the kernel family that actually ran.
+
+    `matched` only says the launch was consistent with what was requested. For
+    the implementations whose whole point is which backend got picked -- SDPA
+    at q_len=1 above all -- the useful answer is the name.
+    """
+    import re
+    for label, pat in (("flashinfer", r"flashinfer"),
+                       ("pytorch-flash", r"pytorch_flash"),
+                       ("flash-attn", r"flash::"),
+                       ("cudnn", r"cudnn"),
+                       ("cutlass-fmha", r"fmha_cutlass|cutlassF|fmha"),
+                       ("triton", r"^_attn|triton_|_attn_fwd|_attn_bwd"),
+                       ("unfused-gemm", r"gemm|softmax")):
+        if re.search(pat, kernels or "", re.I):
+            return label
+    return "unknown"
+
+
 def usable(df: pd.DataFrame) -> pd.DataFrame:
-    """Rows allowed into a speed ranking: measured and correct."""
+    """Rows allowed into a speed ranking: measured, correct and not throttled."""
     ok = (df.status == "OK") & df.median_us.notna()
+    if "tel_throttle" in df:
+        # 0x0 and the GpuIdle bit are benign; anything else is a clock cap.
+        thr = df.tel_throttle.fillna("0x0000000000000000")
+        ok &= thr.isin(["0x0000000000000000", "0x0000000000000001"])
     if "correctness_pass" in df:
         # The gate runs once per equivalence class, so most rows carry NaN.
         # Disqualify the whole class its representative failed on -- otherwise a
@@ -103,6 +150,24 @@ def winners(cells: pd.DataFrame) -> pd.DataFrame:
     return cells.loc[i, ["gpu_name", "cell", "implementation", "median_us"]]
 
 
+def winner_flips(cells: pd.DataFrame) -> dict:
+    """How often the fastest implementation changes across GPUs.
+
+    This is the number finding 1 is about. A pooled count of which
+    implementation wins most often does not answer it.
+    """
+    w = winners(cells)
+    per = w.groupby("cell").implementation.nunique()
+    shared = w.groupby("cell").gpu_name.nunique()
+    common = per[shared == shared.max()]
+    if common.empty:
+        return {"n_cells": 0}
+    return {"n_cells": int(len(common)),
+            "n_gpus": int(shared.max()),
+            "flip_rate": float((common > 1).mean()),
+            "top1_stable": float((common == 1).mean())}
+
+
 def _boot_ratio(a, b, n=2000, seed=0):
     """Cluster bootstrap over process repeats: reps inside one process
     share clocks, allocator state and thermal point, so they are not
@@ -122,7 +187,7 @@ def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05) -> pd.DataFrame:
     ratios past 10%. We lead with the practical count, because at this family
     size a nominal alpha manufactures inversions out of noise.
     """
-    out = []
+    out, examined = [], 0
     for cell in sorted(set(cells[cells.gpu_name.str.contains(g1)].cell)
                        & set(cells[cells.gpu_name.str.contains(g2)].cell)):
         sub = cells[cells.cell == cell]
@@ -131,6 +196,7 @@ def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05) -> pd.DataFrame:
         common = sorted(set(s1.index) & set(s2.index))
         for i, a in enumerate(common):
             for b in common[i + 1:]:
+                examined += 1
                 r1 = s1.median_us[a] / s1.median_us[b]
                 r2 = s2.median_us[a] / s2.median_us[b]
                 if np.sign(r1 - 1) == np.sign(r2 - 1):
@@ -138,7 +204,7 @@ def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05) -> pd.DataFrame:
                 lo1, hi1 = _boot_ratio(s1.samples[a], s1.samples[b])
                 lo2, hi2 = _boot_ratio(s2.samples[a], s2.samples[b])
                 out.append(dict(
-                    cell=cell, a=a, b=b, r1=r1, r2=r2,
+                    cell=cell, a=a, b=b, r1=r1, r2=r2, pairs_examined=examined,
                     sig=(lo1 > 1 or hi1 < 1) and (lo2 > 1 or hi2 < 1),
                     practical=(max(r1, 1 / r1) >= PRACTICAL
                                and max(r2, 1 / r2) >= PRACTICAL)))
@@ -182,7 +248,13 @@ def dispatch_audit(df: pd.DataFrame, impls) -> pd.DataFrame:
             probed=probed,
             matched=(any(re.search(p, k, re.I) for p in pats) if probed
                      else float("nan")),
-            fused_into_sdpa=bool(r.get("fuse_attention", 0)),
+            # The fuse_attention counter misses when an identical graph was
+            # already compiled in the process, so take the launched kernels as
+            # the evidence and let the counter corroborate.
+            fused_into_sdpa=bool(r.get("fuse_attention", 0)) or bool(
+                r.implementation.startswith(("P1-", "D1-")) and probed
+                and re.search(r"flash|fmha|cutlass|cudnn", k, re.I)),
+            observed=observed_backend(k) if probed else "unprobed",
             n_kernels=r.get("n_kernels", 0)))
     return pd.DataFrame(rows)
 
@@ -260,7 +332,36 @@ def selector(cells: pd.DataFrame, meta: dict, max_depth=4) -> dict:
 
 # --------------------------------------------------------------------------- #
 
-def environments(path="results/environment"):
+def nsight(path="results/profile") -> pd.DataFrame:
+    """Nsight counters per kernel, from whatever scripts/profile.sh collected.
+
+    ncu emits one row per kernel per metric; pivot to one row per kernel and
+    label it with the backend family so it joins to the benchmark rows.
+    """
+    frames = []
+    for f in glob.glob(os.path.join(path, "*", "ncu.csv")):
+        try:
+            d = pd.read_csv(f, skiprows=lambda i: False, low_memory=False)
+        except Exception:
+            continue
+        cols = {c.lower(): c for c in d.columns}
+        kn, mn, mv = (cols.get("kernel name"), cols.get("metric name"),
+                      cols.get("metric value"))
+        if not (kn and mn and mv):
+            continue
+        d = d[[kn, mn, mv]].rename(columns={kn: "kernel", mn: "metric",
+                                            mv: "value"})
+        d["value"] = pd.to_numeric(d["value"], errors="coerce")
+        w = d.pivot_table(index="kernel", columns="metric", values="value",
+                          aggfunc="median").reset_index()
+        w["gpu_name"] = os.path.basename(os.path.dirname(f)).replace("-", " ")
+        w["backend"] = w.kernel.map(observed_backend)
+        frames.append(w)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def environments(path=None):
+    path = path or "results/environment"
     out = {}
     for f in glob.glob(os.path.join(path, "*.json")):
         m = json.load(open(f, encoding="utf8"))
@@ -293,6 +394,10 @@ def main(argv=None):
 
     audit = dispatch_audit(df, IMPLS)
     write("dispatch_audit.parquet", audit)
+    write("spread.parquet", spread(cells))
+    ncu = nsight()
+    if len(ncu):
+        write("ncu.parquet", ncu)
 
     gpus = sorted(set(df.gpu_name))
     inv = []
@@ -304,6 +409,9 @@ def main(argv=None):
                 d["gpu_a"], d["gpu_b"] = g1, g2
                 inv.append(d)
             pairs[g1 + " vs " + g2] = rank_correlation(cells, g1, g2)
+            if len(d):
+                pairs[g1 + " vs " + g2]["practical_inversion_rate"] = float(
+                    d.practical.sum() / d.pairs_examined.max())
     write("inversions.parquet",
           pd.concat(inv, ignore_index=True) if inv else pd.DataFrame())
 
@@ -314,16 +422,29 @@ def main(argv=None):
     sel = selector(cells, meta) if len(gpus) > 1 and meta else {"error": "need >1 GPU"}
     write("selector.json", sel)
 
+    sp = spread(cells)
     summary = {
         "n_rows": int(len(df)),
         "n_cells": int(len(cells)),
         "gpus": gpus,
+        # Finding 1: does the fastest implementation change across GPUs.
+        "winner_flips": winner_flips(cells),
+        # Finding 2: how far apart the implementations are, per regime.
+        "spread_by_regime": {k: round(float(v), 2) for k, v in
+                             sp.groupby("regime").spread.median().items()},
+        "median_bw_util": {k: round(float(v), 3) for k, v in
+                           df[df.regime == "decode"].groupby("gpu_name")
+                           .bw_util.median().dropna().items()},
         "status": df.status.value_counts().to_dict(),
         "dispatch_mismatch_rate": (float(1 - audit.matched.mean())
                                    if len(audit) else None),
         "dispatch_probe_failures": (int((~audit.probed).sum())
                                     if len(audit) else 0),
         "winners": winners(cells).implementation.value_counts().to_dict(),
+        # Finding 3: what actually ran, not just whether it was consistent.
+        "observed_backends": (audit.groupby("implementation")["observed"]
+                              .agg(lambda x: x.value_counts().to_dict()).to_dict()
+                              if len(audit) else {}),
         "rank_correlation": pairs,
         "environment": env,
     }
@@ -336,9 +457,15 @@ def main(argv=None):
               "({} probes returned nothing)".format(
                   1 - audit.matched.mean(), int(audit.probed.sum()),
                   int((~audit.probed).sum())))
+    wf = summary["winner_flips"]
+    if wf.get("n_cells"):
+        print("winner changes across {} GPUs in {:.1%} of {} shared cells".format(
+            wf["n_gpus"], wf["flip_rate"], wf["n_cells"]))
+    print("spread (slowest/fastest) by regime:", summary["spread_by_regime"])
     for k, v in pairs.items():
-        print("{}: spearman {:.3f} over {} cells".format(
-            k, v["spearman_median"], v["n_cells"]))
+        print("{}: spearman {:.3f} over {} cells, practical inversions {:.1%}".format(
+            k, v["spearman_median"], v["n_cells"],
+            v.get("practical_inversion_rate", float("nan"))))
     print("wrote", a.out)
 
 

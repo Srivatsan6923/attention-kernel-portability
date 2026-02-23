@@ -42,7 +42,7 @@ torch 2.10 / triton 3.6):
     tests/           semantic checks for the failures that stay silent
     dashboard/app.py results dashboard
     env/Dockerfile   pinned image (torch 2.9, flash-attn, flashinfer)
-    scripts/         NRP job specs and the single-host sweep loop
+    scripts/         NRP job specs, the single-host sweep loop, profiling
 
 ## Running it
 
@@ -121,10 +121,16 @@ outright. Both halves of the rule are recorded so it is visible which one
 decided a cell. Cells that fail are excluded from timing results and kept in the
 failure table.
 
-**Ordering.** Implementation order is shuffled per configuration and measured in
-interleaved rounds, so clock and thermal drift is common-mode across the
-implementations being compared. Confidence intervals come from a bootstrap
-clustered on process repeats, since repeats inside one process share clock state.
+**Ordering.** Implementation order is shuffled per configuration, so clock and
+thermal drift is common-mode across the implementations being compared. Rows
+measured while the GPU reported a throttle reason are dropped. Confidence
+intervals come from a bootstrap clustered on process repeats, since repeats
+inside one process share clock state.
+
+**Profiling.** `scripts/profile.sh` collects Nsight counters and a launch
+timeline for ten representative cells. `ncu` needs GPU performance counters,
+which shared clusters usually withhold; `nsys` CUDA tracing does not, so the
+launch-overhead half of the attribution survives without them.
 
 ## Status
 

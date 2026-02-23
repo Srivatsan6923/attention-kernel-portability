@@ -6,8 +6,8 @@ outbid, and one CUDA OOM takes down a process:
   * rows are keyed by config_hash and skipped if already on disk, so a restart
     picks up where it left off
   * each row is appended and fsync'd, so a hard kill loses one cell
-  * impl order is shuffled per config and measured in interleaved rounds, so
-    clock and thermal drift is common-mode across the impls being compared
+  * impl order is shuffled per config, so clock and thermal drift is
+    common-mode across the impls being compared
   * cells that cannot fit are recorded as OOM_PREDICTED, never attempted
 """
 
@@ -28,10 +28,6 @@ import torch
 
 from akp import bench, check
 from akp.impls import Cfg, impls_for, naive_peak_bytes
-
-STATUSES = ("OK", "OOM_PREDICTED", "OOM", "UNSUPPORTED", "NUMERICAL_FAIL",
-            "CAPTURE_FAIL", "ERROR")
-
 
 # Grids are plain Python: the skip rules are conditional and YAML would need a
 # second language to express them.
@@ -93,10 +89,21 @@ def grid(name):
                     cache="cold")
                 for b in (1, 32) for n in (512, 8192)]
 
-    if name == "profile":                # the three representative cells
-        return [Cfg("prefill", B=4, Hq=32, Hkv=32, D=128, N=2048),
-                Cfg("decode", B=1, Hq=32, Hkv=8, D=128, N=8192, causal=False),
-                Cfg("decode", B=32, Hq=32, Hkv=8, D=128, N=8192, causal=False)]
+    if name == "profile":
+        # The cells worth explaining rather than a sample of the grid: where a
+        # ranking is likely to turn over, and where the bound changes.
+        return [
+            Cfg("prefill", B=4, Hq=32, Hkv=32, D=128, N=512),    # small, launch-sensitive
+            Cfg("prefill", B=4, Hq=32, Hkv=32, D=128, N=2048),   # the reference prefill
+            Cfg("prefill", B=4, Hq=32, Hkv=32, D=64, N=2048),    # head-dim tile change
+            Cfg("prefill", B=1, Hq=32, Hkv=32, D=128, N=8192),   # long context
+            Cfg("prefill", B=4, Hq=32, Hkv=8, D=128, N=2048),    # GQA prefill
+            Cfg("decode", B=1, Hq=32, Hkv=8, D=128, N=512, causal=False),    # launch bound
+            Cfg("decode", B=1, Hq=32, Hkv=8, D=128, N=8192, causal=False),   # bandwidth bound
+            Cfg("decode", B=32, Hq=32, Hkv=8, D=128, N=8192, causal=False),  # after the crossover
+            Cfg("decode", B=64, Hq=32, Hkv=8, D=128, N=16384, causal=False), # largest decode
+            Cfg("decode", B=32, Hq=32, Hkv=32, D=128, N=8192, causal=False), # MHA vs GQA
+        ]
 
     raise SystemExit("unknown grid " + repr(name) + ". known: smoke "
                      "prefill_full prefill_gqa prefill_noncausal prefill_cold "
@@ -219,7 +226,7 @@ NAIVE_LIKE = ("P0-naive", "P1-inductor", "P1-inductor-nofuse",
 GATED = set()   # one correctness gate per equivalence class, not per cell
 
 
-def run_cell(impl, cfg, device, dev_info, reps, full=True):
+def run_cell(impl, cfg, device, dev_info, reps):
     row = {"implementation": impl.name, "status": "OK"}
 
     if not impl.supports(cfg, dev_info) or not impl_applies(impl.name, cfg):
@@ -248,11 +255,8 @@ def run_cell(impl, cfg, device, dev_info, reps, full=True):
                                   built.meta.get("out_layout", "bhsd"),
                                   fn=built.fn))
         row["gate_class"] = "|".join(str(x) for x in cls)
-        # The launched kernels and the peak allocation are properties of the
-        # cell, not of the round, so only the first round pays for them.
-        if full:
-            row["dispatch_trace"] = check.dispatch_probe(built.fn)
-            row.update(bench.peak_memory_mb(built.fn, device))
+        row["dispatch_trace"] = check.dispatch_probe(built.fn)
+        row.update(bench.peak_memory_mb(built.fn, device))
         row.update(bench.measure(built.fn, cfg, device, reps=reps))
 
         if not row.get("correctness_pass", True):
@@ -261,11 +265,6 @@ def run_cell(impl, cfg, device, dev_info, reps, full=True):
         row.update({k: v for k, v in built.meta.items()
                     if not k.startswith("_")})
 
-        # The KV cache must be byte-identical after being timed.
-        caches = built.meta.get("_cache_tensors")
-        if caches is not None:
-            row["cache_checksum"] = float(sum(c.float().sum().item()
-                                              for c in caches))
     except torch.cuda.OutOfMemoryError:
         row["status"] = "OOM"
     except NotImplementedError:
@@ -296,12 +295,6 @@ def main(argv=None):
     ap.add_argument("--out", default="results/raw")
     ap.add_argument("--repeat", type=int, default=0,
                     help="process-level repeat index; part of the config hash")
-    ap.add_argument("--rounds", type=int, default=1,
-                    help="interleaved measurement rounds per cell. One is "
-                         "usually right: implementation order is already "
-                         "shuffled per configuration, the five process repeats "
-                         "supply the replication, and the bootstrap clusters on "
-                         "processes anyway. Extra rounds re-pay the build.")
     ap.add_argument("--reps", type=int, default=30)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--require-gpu", default=None,
@@ -399,40 +392,12 @@ def main(argv=None):
             if not pending:
                 continue
 
-            # Shuffle each round so drift is common-mode across impls.
-            per_impl = {i.name: [] for i in pending}
-            for r in range(a.rounds):
-                order = list(pending)
-                rng.shuffle(order)
-                for impl in order:
-                    per_impl[impl.name].append(
-                        run_cell(impl, cfg, device, dev_info, a.reps,
-                                 full=(r == 0)))
-
-            for impl in pending:
-                rows = per_impl[impl.name]
-                ok = [r for r in rows if r["status"] == "OK"]
-                if ok:
-                    merged = dict(sorted(ok, key=lambda r: r["median_us"])[len(ok) // 2])
-                else:
-                    merged = dict(rows[0])
-                # Only round 0 carries the gate, the probe and the peak
-                # allocation. Carry them across, and let a gate failure win over
-                # the merged status -- otherwise a failing round 0 is dropped
-                # from `ok` and a later ungated round is written as OK.
-                for k, v in rows[0].items():
-                    merged.setdefault(k, v)
-                gated = next((r for r in rows if "correctness_pass" in r), None)
-                if gated is not None:
-                    for k, v in gated.items():
-                        if k.endswith("_err") or k in (
-                                "correctness_pass", "pass_relative",
-                                "pass_tolerance", "tau_dtype", "cosine_sim",
-                                "failed_tensor", "gate_class", "has_nonfinite"):
-                            merged[k] = v
-                    if not gated["correctness_pass"]:
-                        merged["status"] = "NUMERICAL_FAIL"
-                merged["round_median_us"] = [r.get("median_us") for r in rows]
+            # Shuffled so clock and thermal drift is common-mode across the
+            # implementations being compared at this configuration.
+            order = list(pending)
+            rng.shuffle(order)
+            for impl in order:
+                merged = run_cell(impl, cfg, device, dev_info, a.reps)
                 trace = merged.pop("dispatch_trace", None)
                 if trace:
                     merged["dispatch_id"] = dispatch.intern(
@@ -440,7 +405,7 @@ def main(argv=None):
                     merged["n_kernels"] = trace.count("|") + 1
                 merged.update({
                     "config_hash": config_hash(cfg, impl.name, dev_info, sha, a.repeat),
-                    "repeat": a.repeat, "rounds": a.rounds,
+                    "repeat": a.repeat,
                     "regime": cfg.regime, "batch": cfg.B, "hq": cfg.Hq,
                     "hkv": cfg.Hkv, "head_dim": cfg.D, "seq_len": cfg.N,
                     "dtype": cfg.dtype, "mode": cfg.mode, "launch": cfg.launch,

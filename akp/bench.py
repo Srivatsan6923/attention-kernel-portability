@@ -137,7 +137,7 @@ def block_bench(fn, device, reps: int = 30, warmup: int = 25,
     return {"median_us": statistics.median(times),
             "p5_us": times[max(0, int(0.05 * len(times)) - 1)],
             "p95_us": times[min(len(times) - 1, int(0.95 * len(times)))],
-            "all_us": times, "timer": "block_bench", "inner_k": k,
+            "timer": "block_bench", "inner_k": k,
             "reps": reps, "l2_flushed": flush is not None}
 
 
