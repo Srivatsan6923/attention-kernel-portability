@@ -225,6 +225,18 @@ NAIVE_LIKE = ("P0-naive", "P1-inductor", "P1-inductor-nofuse",
 
 GATED = set()   # one correctness gate per equivalence class, not per cell
 
+# After one of these the CUDA context is unusable and every later call fails or
+# returns garbage, so the rows a process would keep writing are worthless. The
+# shard is written and fsync'd per cell, so aborting here loses nothing: the
+# Job restarts the index and resume skips what is already on disk.
+STICKY_CUDA = ("illegal memory access", "unspecified launch failure",
+               "device-side assert", "misaligned address",
+               "CUDA error: an illegal instruction")
+
+
+def _is_sticky(msg: str) -> bool:
+    return any(s in msg for s in STICKY_CUDA)
+
 
 def run_cell(impl, cfg, device, dev_info, reps):
     row = {"implementation": impl.name, "status": "OK"}
@@ -280,7 +292,14 @@ def run_cell(impl, cfg, device, dev_info, reps):
         row["error"] = (type(exc).__name__ + ": " + str(exc))[:400]
     finally:
         del built
-        torch.cuda.empty_cache()
+        # empty_cache itself raises once the context is poisoned; the status
+        # already recorded above is what matters, so do not lose it here.
+        try:
+            torch.cuda.empty_cache()
+        except RuntimeError as exc:
+            row.setdefault("error", ("RuntimeError: " + str(exc))[:400])
+    if _is_sticky(row.get("error", "")):
+        row["fatal"] = True
     return row
 
 
@@ -421,6 +440,13 @@ def main(argv=None):
                 fh.flush()
                 os.fsync(fh.fileno())
                 n_new += 1
+
+                if merged.get("fatal"):
+                    raise SystemExit(
+                        "[akp] aborting: {} left the CUDA context unusable on "
+                        "{} -- {}. {} rows are on disk; the restarted pod "
+                        "resumes after them.".format(
+                            impl.name, cfg.key(), merged.get("error", ""), n_new))
 
             print("[akp] {}/{} {} (+{} rows, {:.0f}s)".format(
                 ci + 1, len(cfgs), cfg.key(), len(pending), time.time() - t0),

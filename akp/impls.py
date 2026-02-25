@@ -76,7 +76,12 @@ def naive_peak_bytes(cfg: Cfg) -> int:
         return 0
     n_scores = cfg.B * cfg.Hq * cfg.N * cfg.N
     qkv = 3 * cfg.B * cfg.Hq * cfg.N * cfg.D * itemsize(cfg)
-    return qkv + n_scores * (2 * itemsize(cfg) + 4)
+    # Measured 10.8 B per score element on sm89: softmax(dtype=fp32) holds the
+    # dtype scores, an fp32 upcast of them and its fp32 output at once, and the
+    # bool causal mask outlives all three. 2*itemsize + 9 bounds that. Erring
+    # high only skips a cell; erring low attempts the allocation this exists to
+    # refuse, and a failed 68 GB attempt fragments the allocator.
+    return qkv + n_scores * (2 * itemsize(cfg) + 9)
 
 
 # --------------------------------------------------------------------------- #

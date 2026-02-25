@@ -37,6 +37,11 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      # The A100 nodes are tainted nvidia.com/gpu. The admission controller
+      # tolerates the extended resources a pod requests, and this one requests
+      # nvidia.com/a100, so the toleration is not injected for it.
+      tolerations:
+        - {key: nvidia.com/gpu, operator: Exists}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -48,15 +53,30 @@ spec:
                   - key: nvidia.com/gpu.product
                     operator: In
                     values: [NVIDIA-A100-SXM4-80GB]
+          # Preferred, not required: rook-cephfs is the US-West pool, so a
+          # us-west node reads the compile cache locally. But this GPU model
+          # also lives in us-central and us-east, and pinning to five busy
+          # nodes stalled a sweep for an hour. The cache is 120 MB read once
+          # per pod and the result writes are small appends, so a remote mount
+          # costs far less than waiting for a local node.
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: topology.kubernetes.io/region
+                    operator: In
+                    values: [us-west]
       containers:
         - name: prewarm
           image: $IMAGE
           workingDir: /workspace
           command: ["sh", "-c"]
           args:
-            - python -m akp.run --grid $GRID --out /data/raw --prewarm
+            - python -m akp.preflight --require-gpu A100-SXM4-80GB
+              --out /data/preflight/$JOBNAME-prewarm-"${JOB_COMPLETION_INDEX:?not an indexed job}".json &&
+              python -m akp.run --grid $GRID --out /data/raw --prewarm
               --require-gpu A100-SXM4-80GB
-              --shard "${JOB_COMPLETION_INDEX:?not an indexed job}" --nshards $NSHARDS
+              --shard "$JOB_COMPLETION_INDEX" --nshards $NSHARDS
           env:
             - {name: PYTHONUNBUFFERED, value: "1"}
           resources:
@@ -99,6 +119,11 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      # The A100 nodes are tainted nvidia.com/gpu. The admission controller
+      # tolerates the extended resources a pod requests, and this one requests
+      # nvidia.com/a100, so the toleration is not injected for it.
+      tolerations:
+        - {key: nvidia.com/gpu, operator: Exists}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -107,15 +132,32 @@ spec:
                   - key: nvidia.com/gpu.product
                     operator: In
                     values: [NVIDIA-A100-SXM4-80GB]
+          # Preferred, not required: rook-cephfs is the US-West pool, so a
+          # us-west node reads the compile cache locally. But this GPU model
+          # also lives in us-central and us-east, and pinning to five busy
+          # nodes stalled a sweep for an hour. The cache is 120 MB read once
+          # per pod and the result writes are small appends, so a remote mount
+          # costs far less than waiting for a local node.
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: topology.kubernetes.io/region
+                    operator: In
+                    values: [us-west]
       containers:
         - name: sweep
           image: $IMAGE
           workingDir: /workspace
           command: ["sh", "-c"]
           args:
-            - python -m akp.run --grid $GRID --out /data/raw
+            # Each pod can land on a different node, so the preflight is per
+            # pod, not per campaign. A node that fails it contributes no rows.
+            - python -m akp.preflight --require-gpu A100-SXM4-80GB
+              --out /data/preflight/$JOBNAME-sweep-"${JOB_COMPLETION_INDEX:?not an indexed job}".json &&
+              python -m akp.run --grid $GRID --out /data/raw
               --require-gpu A100-SXM4-80GB
-              --index "${JOB_COMPLETION_INDEX:?not an indexed job}" --nshards $NSHARDS
+              --index "$JOB_COMPLETION_INDEX" --nshards $NSHARDS
           env:
             - {name: PYTHONUNBUFFERED, value: "1"}
           resources:

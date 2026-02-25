@@ -20,6 +20,14 @@ import pandas as pd
 FIT_GPUS = ("A100", "H100")          # substring match; the rest are held out
 PRACTICAL = 1.10                     # ratio that counts as a practical inversion
 
+# nvidia-smi clocks_throttle_reasons bits. HwSlowdown, SyncBoost, the two
+# thermal slowdowns and HwPowerBrake are erratic; the low three are not.
+ERRATIC_THROTTLE = 0xF8
+
+
+def throttle_bits(df: pd.DataFrame) -> pd.Series:
+    return df.tel_throttle.fillna("0x0").map(lambda s: int(str(s), 16))
+
 
 # --------------------------------------------------------------------------- #
 # Load and derive
@@ -32,6 +40,8 @@ def load(raw="results/raw", dispatch=None) -> pd.DataFrame:
             for f in glob.glob(os.path.join(raw, "*", "*.jsonl"))
             for l in open(f, encoding="utf8")]
     df = pd.DataFrame(rows)
+    if df.empty:
+        raise SystemExit(f"no rows under {raw!r}; expected {raw}/<gpu>/*.jsonl")
     if os.path.exists(dispatch):
         d = pd.DataFrame([json.loads(l) for l in open(dispatch, encoding="utf8")])
         # Pods append concurrently, so the same dispatch_id can land more than
@@ -72,6 +82,11 @@ def derive(df: pd.DataFrame, env: dict | None = None) -> pd.DataFrame:
 
     peak = df.gpu_name.map(_peak)
     df["bw_util"] = df.eff_bw_gbs / peak
+
+    # Kept rather than excluded (see usable), so the rate is reportable in
+    # threats to validity instead of silently shaping the dataset.
+    if "tel_throttle" in df:
+        df["power_capped"] = (throttle_bits(df) & 0x4) != 0
 
     # Cell identity: the workload shape, minus which impl ran.
     df["cell"] = (df.regime + "|B" + df.batch.astype(str) + "|Hq" + df.hq.astype(str)
@@ -118,9 +133,16 @@ def usable(df: pd.DataFrame) -> pd.DataFrame:
     """Rows allowed into a speed ranking: measured, correct and not throttled."""
     ok = (df.status == "OK") & df.median_us.notna()
     if "tel_throttle" in df:
-        # 0x0 and the GpuIdle bit are benign; anything else is a clock cap.
-        thr = df.tel_throttle.fillna("0x0000000000000000")
-        ok &= thr.isin(["0x0000000000000000", "0x0000000000000001"])
+        # GpuIdle (0x1), ApplicationsClocks (0x2) and SwPowerCap (0x4) are the
+        # steady state of a loaded datacenter GPU, not faults. Excluding
+        # SwPowerCap costs 21% of A100 decode rows, and since it fires with
+        # workload size (2.8% at N=512, 45% at N=16384) and unevenly across
+        # implementations, it would delete the large-config end of the grid and
+        # bias against whichever kernels drive the GPU hardest. It is worth
+        # ~1.6% of SM clock and is common-mode across the interleaved
+        # implementations at a config. Hardware and thermal slowdowns are
+        # erratic rather than steady, so those still disqualify a row.
+        ok &= (throttle_bits(df) & ERRATIC_THROTTLE) == 0
     if "correctness_pass" in df:
         # The gate runs once per equivalence class, so most rows carry NaN.
         # Disqualify the whole class its representative failed on -- otherwise a

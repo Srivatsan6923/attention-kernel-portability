@@ -13,8 +13,13 @@ PAR=${3:-$NSHARDS}
 : "${IMAGE:?set IMAGE to the pushed image reference}"
 
 NS=$(kubectl config view --minify -o jsonpath='{..namespace}')
-read -r HARD USED < <(kubectl get resourcequota a100-limit -n "$NS" \
+# Plain expansion rather than `read < <(...)`: jsonpath prints no trailing
+# newline, so read returns non-zero at EOF and set -e kills the script here,
+# before the first echo, with no output to say why.
+QUOTA=$(kubectl get resourcequota a100-limit -n "$NS" \
   -o jsonpath='{.status.hard.requests\.nvidia\.com/a100} {.status.used.requests\.nvidia\.com/a100}')
+HARD=${QUOTA%% *}
+USED=${QUOTA##* }
 FREE=$((HARD - USED))
 echo "namespace $NS: a100 quota $USED/$HARD used, $FREE free; requesting $PAR"
 if [ "$PAR" -gt "$FREE" ]; then
