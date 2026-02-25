@@ -48,8 +48,22 @@ torch 2.10 / triton 3.6):
 
     pip install -e ".[dev]"          # add [kernels] for flash-attn + flashinfer
     pytest tests/ -q
+    python -m akp.preflight          # must print Overall: PASS
     python -m akp.run --grid smoke   # ~90 s, writes results/raw/<gpu>/*.jsonl
     python -m akp.analysis
+
+`akp.preflight` is the gate on collecting anything from a GPU. It checks the
+device is the one requested and not a MIG slice, that nothing else is resident
+on it, that it is not already throttled, that every implementation imports,
+runs, dispatches to a real kernel and passes the numerical gate in both
+directions, that the OOM predictor bounds the real allocation, and that
+doubling the work doubles the measured time. It exits non-zero on failure, so
+a sweep can be gated on it, and it drives the same code the sweep drives
+rather than reimplementing the checks.
+
+It has caught, on real hardware: an OOM predictor short by 35%, a throttle
+filter discarding a fifth of the rows, and an image whose baked git sha named
+a commit that could not have produced the code inside it.
 
 Grids: `smoke`, `prefill_full`, `prefill_gqa`, `prefill_noncausal`,
 `prefill_cold`, `decode_full`, `decode_cudagraph`, `decode_cold`, `profile`.
@@ -67,8 +81,13 @@ them once up front keeps them out of the measured repeats.
 
 ## Running on a cluster
 
-    docker build -f env/Dockerfile -t ghcr.io/<user>/akp:<tag> .
+    docker build -f env/Dockerfile \
+      --build-arg GIT_SHA=$(git rev-parse HEAD) -t ghcr.io/<user>/akp:<tag> .
     docker push ghcr.io/<user>/akp:<tag>
+
+The sha is not optional: every row carries it as its provenance, and the build
+refuses anything that is not a full 40-character sha. An image that names one
+commit while containing another produces a dataset nobody can reproduce.
 
 On NRP/Nautilus, once per namespace:
 
@@ -78,10 +97,14 @@ Then per grid:
 
     IMAGE=ghcr.io/<user>/akp:v1 scripts/nrp_launch.sh prefill_full 2 2
 
-That is a prewarm Job followed by an Indexed Job of five completions at
-parallelism four — one process repeat per pod, one A100 per pod. Jobs rather
-than interactive pods, since interactive pods are destroyed after six hours and
-a full grid takes longer than that.
+That is a prewarm Job followed by an Indexed Job of five process repeats across
+NSHARDS config shards, one A100 per pod. Jobs rather than interactive pods,
+since interactive pods are destroyed after six hours and a full grid takes
+longer than that.
+
+Every pod runs `akp.preflight` before `akp.run` and exits without writing rows
+if it fails. The gate is per pod, not per campaign, because pods land on
+different nodes. Reports are kept under `/data/preflight/`.
 
 On a single host without Kubernetes (a rented H100, an Ada box):
 
