@@ -65,7 +65,15 @@ ENV TORCHINDUCTOR_CACHE_DIR=/data/cache/inductor \
     TRITON_CACHE_DIR=/data/cache/triton \
     FLASHINFER_WORKSPACE_BASE=/data/cache/flashinfer
 
+# Every row carries this as its provenance, so a stale or omitted value
+# mislabels a whole dataset silently: the first pushed image shipped code from
+# one commit while claiming another, and the rows pointed at a commit that
+# could not produce them. Fail the build rather than ship that.
+#
+#   docker build -f env/Dockerfile --build-arg GIT_SHA=$(git rev-parse HEAD) .
 ARG GIT_SHA=unknown
+RUN test ${#GIT_SHA} -eq 40 || { \
+      echo "GIT_SHA must be the full 40-char sha, got '${GIT_SHA}'"; exit 1; }
 ENV AKP_GIT_SHA=${GIT_SHA}
 
 WORKDIR /workspace
