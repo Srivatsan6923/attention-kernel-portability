@@ -249,3 +249,71 @@ def test_reference_is_independently_correct():
     ref_np = np.einsum("bhqk,bhkd->bhqd", p, v)
     got = check.reference(cfg, DEV).double().cpu().numpy()
     assert np.abs(got - ref_np).max() < 1e-2
+
+
+# Adversarial input families.
+#
+# Standard-normal inputs exercise the easy part of softmax. The trap specific
+# to attention is logit magnitude: without max-subtraction the exponentials
+# overflow and the kernel returns NaN, and a kernel that only ever sees
+# N(0, 1) inputs passes every test while being wrong in production.
+
+FAMILIES = {
+    # q.k over D=64 dims has std ~8; scaling both by 16 puts pre-softmax
+    # logits near 256, where exp() overflows fp32 unless the max is removed.
+    "large-logits": {"q": 16.0, "k": 16.0},
+    # Every key equally weighted. Degenerate, and a plausible place for a
+    # tie-breaking or normalisation bug to surface.
+    "zero-logits": {"q": 0.0, "k": 0.0},
+    # Denormal territory in fp16.
+    "tiny-values": {"q": 1e-3, "k": 1e-3, "v": 1e-3},
+}
+
+ADVERSARIAL = [
+    Cfg("prefill", B=1, Hq=4, Hkv=4, D=64, N=128),
+    Cfg("decode", B=2, Hq=4, Hkv=1, D=64, N=128, causal=False),
+]
+
+
+def _scaled_inputs(scales):
+    """make_inputs, with named tensors rescaled.
+
+    Patched into both akp.impls and akp.check so the implementation and the
+    reference it is graded against see the same tensors; check.py binds
+    make_inputs at import, so patching one module is not enough.
+    """
+    def wrapper(cfg, device, seed=0, requires_grad=False):
+        t = make_inputs(cfg, device, seed=seed, requires_grad=False)
+        return {name: (x * scales[name] if name in scales else x)
+                for name, x in t.items()}
+    return wrapper
+
+
+@pytest.mark.parametrize("family", sorted(FAMILIES))
+@pytest.mark.parametrize("cfg", ADVERSARIAL, ids=lambda c: c.key())
+def test_impls_stay_finite_and_correct_on_adversarial_inputs(family, cfg,
+                                                             monkeypatch):
+    wrapper = _scaled_inputs(FAMILIES[family])
+    monkeypatch.setattr("akp.impls.make_inputs", wrapper)
+    monkeypatch.setattr("akp.check.make_inputs", wrapper)
+
+    info = dev_info()
+    ran = 0
+    for impl in IMPLS.values():
+        if impl.regime != cfg.regime or not impl.supports(cfg, info):
+            continue
+        got = build_or_skip(impl, cfg)
+        if got is None:
+            continue
+        built, out = got
+        assert torch.isfinite(out.float()).all(), (
+            f"{impl.name} returned non-finite values on {family!r} inputs; "
+            "the softmax is likely missing its max subtraction")
+        res = check.gate(cfg, DEV, out, built.meta.get("out_layout", "bhsd"),
+                         fn=built.fn)
+        assert res["correctness_pass"], (
+            f"{impl.name} failed the gate on {family!r}: "
+            f"{res['max_abs_err']:.3e} vs baseline "
+            f"{res['baseline_max_abs_err']:.3e}")
+        ran += 1
+    assert ran >= 2, f"no implementations were exercised for {family!r}"
