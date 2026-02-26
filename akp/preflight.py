@@ -168,7 +168,14 @@ def check_capability(ctx):
 
 
 def _impl_smoke(name, impl, cfg, device, dev):
-    """Build, run, probe dispatch and gate numerics -- the sweep's own path."""
+    """Build, run, gate numerics and probe dispatch -- run_cell's own order.
+
+    The gate goes before the probe because that is what the sweep does, and the
+    order turns out to matter: sixteen probes fired back to back finish faster
+    than CUPTI flushes its buffers, and most come back empty. In the sweep an
+    fp32 reference and a full timing block sit between consecutive probes, and
+    coverage there is 1450 of 1450 rows on this same device.
+    """
     if not impl.supports(cfg, dev) or not run.impl_applies(name, cfg):
         return "SKIP", "unsupported at the probe shape"
     built = None
@@ -176,15 +183,18 @@ def _impl_smoke(name, impl, cfg, device, dev):
         built = impl.build(cfg, device)
         out = built.fn()
         torch.cuda.synchronize()
-        trace = check.dispatch_probe(built.fn)
-        if trace.startswith("<"):
-            return "FAIL", f"no dispatch trace: {trace}"
         g = check.gate(cfg, device, out, built.meta.get("out_layout", "bhsd"),
                        fn=built.fn)
         if not g["correctness_pass"]:
             return "FAIL", (f"gate failed on {g.get('failed_tensor', 'out')}: "
                             f"err {g['max_abs_err']:.3e} vs "
                             f"2x naive {2 * g['baseline_max_abs_err']:.3e}")
+        trace = check.dispatch_probe(built.fn)
+        if trace.startswith("<"):
+            # Not FAIL: the kernel ran and was numerically right, so this is
+            # the profiler being unavailable rather than the backend being
+            # wrong. run.py records the same string and analysis counts it.
+            return "WARN", f"correct, but no dispatch trace: {trace}"
         return "PASS", (f"err {g['max_abs_err']:.2e} | "
                         f"{trace.count('|') + 1} kernel(s)")
     except Exception as exc:
@@ -201,16 +211,25 @@ def check_impls(ctx):
     result worth seeing before the sweep rather than a hole discovered after.
     """
     device, dev = ctx["device"], ctx["dev"]
-    rows, bad = [], []
+    rows, bad, blind = [], [], []
     for name, impl in IMPLS.items():
         cfg = DECODE if impl.regime == "decode" else PREFILL
         st, detail = _impl_smoke(name, impl, cfg, device, dev)
         rows.append(f"    {name:22s} {st:5s} {detail}")
         if st == "FAIL":
             bad.append(name)
+        elif st == "WARN":
+            blind.append(name)
     ctx["impl_report"] = rows
+    traced = sum(1 for r in rows if " PASS " in r)
     if bad:
         return "FAIL", f"{len(bad)} implementation(s) failed: {bad}"
+    if blind and traced == 0:
+        # Dispatch verification is a headline result of the study, so a host
+        # where the profiler never returns anything cannot produce it.
+        return "FAIL", f"no implementation produced a dispatch trace: {blind}"
+    if blind:
+        return "WARN", f"{len(blind)} correct but unprofiled: {blind}"
     return "PASS", f"{len(rows)} implementations probed"
 
 
@@ -280,14 +299,23 @@ def check_timer(ctx):
     # intercept. Interleaved for the same reason the sweep interleaves
     # implementations (6.2) -- measured back to back, clock drift lands on
     # whichever ran second and reads as non-linearity.
+    # warmup=200, not block_bench's default 25: at ~100 us a matmul that is
+    # only 2.5 ms of warm-up, far too short for an SM clock to settle. The
+    # A100 measured 1.81 with a short warm-up because the longer arm spent
+    # more of itself at a higher clock -- the bias is always toward the
+    # shorter arm looking slow, so it reads as sub-linear scaling.
     two, four = [], []
     for _ in range(3):
-        two.append(bench.block_bench(work(2), device, reps=10, warmup=10)["median_us"])
-        four.append(bench.block_bench(work(4), device, reps=10, warmup=10)["median_us"])
+        two.append(bench.block_bench(work(2), device, reps=10, warmup=200)["median_us"])
+        four.append(bench.block_bench(work(4), device, reps=10, warmup=200)["median_us"])
     t2, t4 = sorted(two)[1], sorted(four)[1]
     ratio = t4 / t2
     detail = f"2x={t2:.1f}us 4x={t4:.1f}us ratio={ratio:.2f}"
-    if not 1.8 <= ratio <= 2.2:
+    # 1.75 rather than 1.8: a warm A100 measured 1.81, and a gate that a good
+    # host clears by 0.01 fails honest hosts on noise. The failure this has to
+    # catch -- a timer measuring nothing, an unsynchronized region, events made
+    # inside the timed block -- lands nowhere near 1.75, it lands near 1.0.
+    if not 1.75 <= ratio <= 2.25:
         return "FAIL", f"work does not scale linearly with time: {detail}"
 
     overhead = ctx["manifest"]["event_overhead_us"]
