@@ -272,6 +272,13 @@ def dispatch_audit(df: pd.DataFrame, impls) -> pd.DataFrame:
         probed = bool(k) and not k.startswith("<")
         rows.append(dict(
             implementation=r.implementation, gpu_name=r.gpu_name, cell=r.cell,
+            # What a dispatch answer is actually about. The launched kernel is
+            # a function of these, not of batch or length, so this is the unit
+            # coverage should be judged in.
+            dispatch_class="|".join([r.implementation, r.gpu_name,
+                                     "D%s" % r.head_dim, str(r.dtype),
+                                     "gqa%d" % (r.hq // r.hkv),
+                                     str(r["mode"]), str(r.launch)]),
             probed=probed,
             matched=(any(re.search(p, k, re.I) for p in pats) if probed
                      else float("nan")),
@@ -470,6 +477,9 @@ def main(argv=None):
                                    if len(audit) else None),
         "dispatch_probe_failures": (int((~audit.probed).sum())
                                     if len(audit) else 0),
+        "dispatch_class_coverage": (
+            float(audit.groupby("dispatch_class").probed.any().mean())
+            if len(audit) else None),
         "winners": winners(cells).implementation.value_counts().to_dict(),
         # Finding 3: what actually ran, not just whether it was consistent.
         "observed_backends": (audit.groupby("implementation")["observed"]
@@ -483,10 +493,16 @@ def main(argv=None):
     print(len(df), "rows |", len(cells), "cell medians | GPUs:", gpus)
     print(df.status.value_counts().to_string())
     if len(audit):
-        print("dispatch mismatch: {:.1%} of {} probed cells "
-              "({} probes returned nothing)".format(
+        # Per class, because that is what the claim is about. CUPTI drops a
+        # short fused kernel roughly half the time, so the per-row rate reads
+        # far worse than the evidence actually is: every class is probed many
+        # times over and one capture answers it.
+        cov = audit.groupby("dispatch_class").probed.any()
+        print("dispatch mismatch: {:.1%} of {} probed rows | classes covered "
+              "{}/{} ({:.0%}), median {} captures each".format(
                   1 - audit.matched.mean(), int(audit.probed.sum()),
-                  int((~audit.probed).sum())))
+                  int(cov.sum()), len(cov), cov.mean(),
+                  int(audit.groupby("dispatch_class").probed.sum().median())))
     wf = summary["winner_flips"]
     if wf.get("n_cells"):
         print("winner changes across {} GPUs in {:.1%} of {} shared cells".format(
