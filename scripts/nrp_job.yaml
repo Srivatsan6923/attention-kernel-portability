@@ -52,7 +52,7 @@ spec:
                   # invalidate every cross-device comparison.
                   - key: nvidia.com/gpu.product
                     operator: In
-                    values: [NVIDIA-A100-SXM4-80GB]
+                    values: [$GPU_PRODUCT]
           # Preferred, not required: rook-cephfs is the US-West pool, so a
           # us-west node reads the compile cache locally. But this GPU model
           # also lives in us-central and us-east, and pinning to five busy
@@ -72,18 +72,18 @@ spec:
           workingDir: /workspace
           command: ["sh", "-c"]
           args:
-            - python -m akp.preflight --require-gpu A100-SXM4-80GB
+            - python -m akp.preflight --require-gpu $REQUIRE_GPU
               --out /data/preflight/$JOBNAME-prewarm-"${JOB_COMPLETION_INDEX:?not an indexed job}".json &&
               python -m akp.run --grid $GRID --out /data/raw --prewarm
-              --require-gpu A100-SXM4-80GB
+              --require-gpu $REQUIRE_GPU
               --shard "$JOB_COMPLETION_INDEX" --nshards $NSHARDS
           env:
             - {name: PYTHONUNBUFFERED, value: "1"}
           resources:
             # nvcc and Inductor autotune are CPU-bound; a 4-core pod triples the
             # compile bill. A100 is a named resource, not plain nvidia.com/gpu.
-            limits:   {cpu: "16", memory: 64Gi, ephemeral-storage: 100Gi, nvidia.com/a100: "1"}
-            requests: {cpu: "16", memory: 64Gi, ephemeral-storage: 100Gi, nvidia.com/a100: "1"}
+            limits:   {cpu: "$CPU", memory: $MEM, ephemeral-storage: 100Gi, $GPU_RESOURCE: "1"}
+            requests: {cpu: "$CPU", memory: $MEM, ephemeral-storage: 100Gi, $GPU_RESOURCE: "1"}
           volumeMounts:
             - {name: data, mountPath: /data}
             - {name: dshm, mountPath: /dev/shm}
@@ -131,7 +131,7 @@ spec:
               - matchExpressions:
                   - key: nvidia.com/gpu.product
                     operator: In
-                    values: [NVIDIA-A100-SXM4-80GB]
+                    values: [$GPU_PRODUCT]
           # Preferred, not required: rook-cephfs is the US-West pool, so a
           # us-west node reads the compile cache locally. But this GPU model
           # also lives in us-central and us-east, and pinning to five busy
@@ -153,16 +153,16 @@ spec:
           args:
             # Each pod can land on a different node, so the preflight is per
             # pod, not per campaign. A node that fails it contributes no rows.
-            - python -m akp.preflight --require-gpu A100-SXM4-80GB
+            - python -m akp.preflight --require-gpu $REQUIRE_GPU
               --out /data/preflight/$JOBNAME-sweep-"${JOB_COMPLETION_INDEX:?not an indexed job}".json &&
               python -m akp.run --grid $GRID --out /data/raw
-              --require-gpu A100-SXM4-80GB
+              --require-gpu $REQUIRE_GPU
               --index "$JOB_COMPLETION_INDEX" --nshards $NSHARDS
           env:
             - {name: PYTHONUNBUFFERED, value: "1"}
           resources:
-            limits:   {cpu: "16", memory: 64Gi, ephemeral-storage: 100Gi, nvidia.com/a100: "1"}
-            requests: {cpu: "16", memory: 64Gi, ephemeral-storage: 100Gi, nvidia.com/a100: "1"}
+            limits:   {cpu: "$CPU", memory: $MEM, ephemeral-storage: 100Gi, $GPU_RESOURCE: "1"}
+            requests: {cpu: "$CPU", memory: $MEM, ephemeral-storage: 100Gi, $GPU_RESOURCE: "1"}
           volumeMounts:
             - {name: data, mountPath: /data}
             - {name: dshm, mountPath: /dev/shm}
