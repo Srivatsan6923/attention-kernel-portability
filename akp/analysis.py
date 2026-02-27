@@ -33,9 +33,15 @@ def throttle_bits(df: pd.DataFrame) -> pd.Series:
 # Load and derive
 # --------------------------------------------------------------------------- #
 
+def _beside(raw, name):
+    """Sibling of the raw directory. The cluster mounts results somewhere
+    other than ./results, so anything resolved relative to the cwd is found
+    only by accident."""
+    return os.path.join(os.path.dirname(raw.rstrip("/\\")), name)
+
+
 def load(raw="results/raw", dispatch=None) -> pd.DataFrame:
-    dispatch = dispatch or os.path.join(os.path.dirname(raw.rstrip("/\\")),
-                                       "dispatch.jsonl")
+    dispatch = dispatch or _beside(raw, "dispatch.jsonl")
     rows = [json.loads(l)
             for f in glob.glob(os.path.join(raw, "*", "*.jsonl"))
             for l in open(f, encoding="utf8")]
@@ -50,8 +56,7 @@ def load(raw="results/raw", dispatch=None) -> pd.DataFrame:
         d = d.drop_duplicates("dispatch_id")
         df = df.merge(d[["dispatch_id", "kernels"]], on="dispatch_id",
                       how="left", validate="m:1")
-    envdir = os.path.join(os.path.dirname(raw.rstrip("/\\")), "environment")
-    return derive(df, environments(envdir))
+    return derive(df, environments(_beside(raw, "environment")))
 
 
 def derive(df: pd.DataFrame, env: dict | None = None) -> pd.DataFrame:
@@ -401,7 +406,10 @@ def main(argv=None):
 
     df = load(a.raw)
     cells = per_cell_median(usable(df))
-    env = environments()
+    # Same directory load() used. Called bare it defaulted to a path
+    # relative to the cwd, came back empty on the cluster, and the
+    # selector below silently reported 'need >1 GPU' with five of them.
+    env = environments(_beside(a.raw, "environment"))
     os.makedirs(a.out, exist_ok=True)
 
     def write(name, obj):
@@ -488,6 +496,16 @@ def main(argv=None):
         print("{}: spearman {:.3f} over {} cells, practical inversions {:.1%}".format(
             k, v["spearman_median"], v["n_cells"],
             v.get("practical_inversion_rate", float("nan"))))
+    # Printed because it is the last artifact and the easiest to lose: it wrote
+    # {"error": "need >1 GPU"} on a two-GPU dataset for as long as nothing
+    # showed it, and a selector that never ran looks exactly like one nobody
+    # has got to yet.
+    if "accuracy" in sel:
+        print("selector: {:.1%} top-1 on {} held-out cells, median regret "
+              "{:.3f}, p95 {:.3f}".format(sel["accuracy"], sel["n_heldout"],
+                                          sel["median_regret"], sel["p95_regret"]))
+    else:
+        print("selector: not fitted --", sel["error"])
     print("wrote", a.out)
 
 
