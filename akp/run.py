@@ -225,6 +225,14 @@ NAIVE_LIKE = ("P0-naive", "P1-inductor", "P1-inductor-nofuse",
 
 GATED = set()   # one correctness gate per equivalence class, not per cell
 
+# A config is eligible to be its class's gate only if the unchunked naive
+# baseline fits well inside memory. 8 GB covers B=4 N=4096 and everything
+# smaller, which every class in every grid contains; decode has no score
+# matrix, so naive_peak_bytes is 0 there and every decode cell is eligible.
+GATE_BUDGET_BYTES = 8e9
+
+SEEN_CLASSES = set()   # to report any class no cheap config gated
+
 # After one of these the CUDA context is unusable and every later call fails or
 # returns garbage, so the rows a process would keep writing are worthless. The
 # shard is written and fsync'd per cell, so aborting here loses nothing: the
@@ -261,11 +269,19 @@ def run_cell(impl, cfg, device, dev_info, reps):
         # batch or length, so gate one cell per class. The reference costs more
         # than the measurement it guards.
         cls = (impl.name, cfg.D, cfg.dtype, cfg.causal, cfg.gqa, cfg.mode)
-        if cls not in GATED:
+        # Gate on a cheap member of the class, not on whichever one came first.
+        # The baseline the gate compares against is an unchunked naive, so at
+        # B=16 N=8192 the gate would try the 450 GB allocation the impl itself
+        # is allowed to skip -- and since the class is marked gated either way,
+        # one unlucky ordering would leave it silently unverified forever.
+        # Correctness does not depend on B or N, so waiting for a small config
+        # of the same class costs nothing.
+        if cls not in GATED and naive_peak_bytes(cfg) < GATE_BUDGET_BYTES:
             GATED.add(cls)
             row.update(check.gate(cfg, device, out,
                                   built.meta.get("out_layout", "bhsd"),
                                   fn=built.fn))
+        SEEN_CLASSES.add(cls)
         row["gate_class"] = "|".join(str(x) for x in cls)
         row["dispatch_trace"] = check.dispatch_probe(built.fn)
         row.update(bench.peak_memory_mb(built.fn, device))
@@ -452,6 +468,14 @@ def main(argv=None):
                 ci + 1, len(cfgs), cfg.key(), len(pending), time.time() - t0),
                 flush=True)
 
+    ungated = SEEN_CLASSES - GATED
+    if ungated:
+        # Silent otherwise: rows carry gate_class either way, and
+        # analysis treats a class with no verdict as passing.
+        print("[akp] WARNING: {} class(es) ran without a correctness "
+              "gate; no config of theirs was cheap enough to gate on: "
+              "{}".format(len(ungated), sorted("|".join(str(x) for x in c)
+                                               for c in ungated)[:5]))
     print("[akp] wrote {} rows to {}".format(n_new, shard))
 
 
