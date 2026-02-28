@@ -213,13 +213,17 @@ def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05) -> pd.DataFrame:
     Statistical: signs differ and both bootstrap CIs exclude 1. Practical: both
     ratios past 10%. We lead with the practical count, because at this family
     size a nominal alpha manufactures inversions out of noise.
+
+    g1 and g2 are matched exactly, never as substrings: "NVIDIA A10" is a
+    substring of "NVIDIA A100-SXM4-80GB", so a contains() match would fold the
+    two devices into one and compare a device against itself.
     """
     out, examined = [], 0
-    for cell in sorted(set(cells[cells.gpu_name.str.contains(g1)].cell)
-                       & set(cells[cells.gpu_name.str.contains(g2)].cell)):
+    for cell in sorted(set(cells[cells.gpu_name == g1].cell)
+                       & set(cells[cells.gpu_name == g2].cell)):
         sub = cells[cells.cell == cell]
-        s1 = sub[sub.gpu_name.str.contains(g1)].set_index("implementation")
-        s2 = sub[sub.gpu_name.str.contains(g2)].set_index("implementation")
+        s1 = sub[sub.gpu_name == g1].set_index("implementation")
+        s2 = sub[sub.gpu_name == g2].set_index("implementation")
         common = sorted(set(s1.index) & set(s2.index))
         for i, a in enumerate(common):
             for b in common[i + 1:]:
@@ -243,8 +247,8 @@ def rank_correlation(cells: pd.DataFrame, g1: str, g2: str) -> dict:
     rs, ks = [], []
     for cell in set(cells.cell):
         sub = cells[cells.cell == cell]
-        s1 = sub[sub.gpu_name.str.contains(g1)].set_index("implementation").median_us
-        s2 = sub[sub.gpu_name.str.contains(g2)].set_index("implementation").median_us
+        s1 = sub[sub.gpu_name == g1].set_index("implementation").median_us
+        s2 = sub[sub.gpu_name == g2].set_index("implementation").median_us
         common = sorted(set(s1.index) & set(s2.index))
         if len(common) < 3:
             continue
