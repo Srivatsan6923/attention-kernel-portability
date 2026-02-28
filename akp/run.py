@@ -223,6 +223,21 @@ def config_hash(cfg, impl, dev, sha, repeat):
 NAIVE_LIKE = ("P0-naive", "P1-inductor", "P1-inductor-nofuse",
               "P1-inductor-where")
 
+
+def oom_predicted_bytes(impl_name, cfg, dev_info):
+    """Bytes this cell would need, if that is more than the device has.
+
+    Shared by the timed path and by prewarm. Prewarm used to skip the check
+    and call build().fn() directly, so it really did attempt the 450 GB
+    allocation at B=16 N=8192: the OOM is caught, but it leaves the allocator
+    wedged and the next Inductor autotune dies with an illegal memory access,
+    which poisons the context for everything after it.
+    """
+    if impl_name not in NAIVE_LIKE:
+        return 0
+    need = naive_peak_bytes(cfg)
+    return need if need > 0.85 * dev_info["total_memory_gb"] * 1e9 else 0
+
 GATED = set()   # one correctness gate per equivalence class, not per cell
 
 # A config is eligible to be its class's gate only if the unchunked naive
@@ -253,11 +268,10 @@ def run_cell(impl, cfg, device, dev_info, reps):
         return {**row, "status": "UNSUPPORTED"}
 
     # Never attempt an allocation we can compute in advance will fail.
-    if impl.name in NAIVE_LIKE:
-        need = naive_peak_bytes(cfg)
-        if need > 0.85 * dev_info["total_memory_gb"] * 1e9:
-            return {**row, "status": "OOM_PREDICTED",
-                    "predicted_peak_gb": round(need / 1e9, 2)}
+    need = oom_predicted_bytes(impl.name, cfg, dev_info)
+    if need:
+        return {**row, "status": "OOM_PREDICTED",
+                "predicted_peak_gb": round(need / 1e9, 2)}
 
     built = None
     try:
@@ -400,6 +414,8 @@ def main(argv=None):
         for ci, cfg in enumerate(cfgs):
             for impl in impls_for(cfg.regime):
                 if not impl.supports(cfg, dev_info) or not impl_applies(impl.name, cfg):
+                    continue
+                if oom_predicted_bytes(impl.name, cfg, dev_info):
                     continue
                 try:
                     impl.build(cfg, device).fn()

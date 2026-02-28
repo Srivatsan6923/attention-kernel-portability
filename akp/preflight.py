@@ -202,7 +202,14 @@ def _impl_smoke(name, impl, cfg, device, dev):
         return "FAIL", f"{type(exc).__name__}: {exc}"[:160]
     finally:
         del built
-        torch.cuda.empty_cache()
+        # An illegal memory access poisons the context, and then empty_cache
+        # raises too -- from a finally, which discards the return above and
+        # propagates instead. That loses the one thing worth knowing: which
+        # implementation faulted.
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 
 def check_impls(ctx):
@@ -213,12 +220,22 @@ def check_impls(ctx):
     """
     device, dev = ctx["device"], ctx["dev"]
     rows, bad, blind = [], [], []
+    poisoned = False
     for name, impl in IMPLS.items():
+        if poisoned:
+            rows.append(f"    {name:22s} SKIP  not probed, CUDA context already lost")
+            continue
         cfg = DECODE if impl.regime == "decode" else PREFILL
         st, detail = _impl_smoke(name, impl, cfg, device, dev)
         rows.append(f"    {name:22s} {st:5s} {detail}")
         if st == "FAIL":
             bad.append(name)
+            # Everything after an illegal access fails identically, which
+            # buries the one implementation that actually broke.
+            if run._is_sticky(detail):
+                poisoned = True
+                rows.append(f"    -> {name} poisoned the context; "
+                            "later implementations were not probed")
         elif st == "WARN":
             blind.append(name)
     ctx["impl_report"] = rows
