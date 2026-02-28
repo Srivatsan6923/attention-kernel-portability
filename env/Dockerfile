@@ -89,4 +89,14 @@ import torch, triton, flash_attn, flashinfer; \
 print('torch', torch.__version__, 'triton', triton.__version__, \
       'flash_attn', flash_attn.__version__, 'flashinfer', flashinfer.__version__)"
 
+# And import our own code, which the check above never touched. A stray edit
+# left a syntax error in the vendored Triton kernel; the build stayed green
+# because nothing here imported akp, and every pod would have died on startup
+# instead. Importing the registry also proves every implementation registered.
+RUN python -c "\
+import akp.impls, akp.run, akp.check, akp.bench, akp.analysis, akp.preflight; \
+n = len(akp.impls.IMPLS); \
+print('akp ok:', n, 'implementations registered'); \
+assert n >= 15, 'expected the full registry, got %d' % n"
+
 CMD ["python", "-m", "akp.run", "--grid", "smoke"]
