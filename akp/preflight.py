@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 
 import torch
 
@@ -299,15 +300,22 @@ def check_timer(ctx):
     # intercept. Interleaved for the same reason the sweep interleaves
     # implementations (6.2) -- measured back to back, clock drift lands on
     # whichever ran second and reads as non-linearity.
-    # warmup=200, not block_bench's default 25: at ~100 us a matmul that is
-    # only 2.5 ms of warm-up, far too short for an SM clock to settle. The
-    # A100 measured 1.81 with a short warm-up because the longer arm spent
-    # more of itself at a higher clock -- the bias is always toward the
-    # shorter arm looking slow, so it reads as sub-linear scaling.
+    # Warm up for a fixed duration, not a fixed count. An A100 idles around
+    # 1155 of 1410 MHz and ramps under load; 200 iterations is ~40 ms, which
+    # is not enough for that to settle. The bias always falls on the shorter
+    # arm -- it runs more of itself at a lower clock -- so an unsettled clock
+    # reads as sub-linear scaling and fails a perfectly good host. Two A100
+    # nodes scored 1.69 this way while an L40, already pinned at its max
+    # clock, scored 1.96.
+    settle = time.time() + 1.0
+    while time.time() < settle:
+        work(8)()
+    torch.cuda.synchronize()
+
     two, four = [], []
     for _ in range(3):
-        two.append(bench.block_bench(work(2), device, reps=10, warmup=200)["median_us"])
-        four.append(bench.block_bench(work(4), device, reps=10, warmup=200)["median_us"])
+        two.append(bench.block_bench(work(2), device, reps=10, warmup=100)["median_us"])
+        four.append(bench.block_bench(work(4), device, reps=10, warmup=100)["median_us"])
     t2, t4 = sorted(two)[1], sorted(four)[1]
     ratio = t4 / t2
     detail = f"2x={t2:.1f}us 4x={t4:.1f}us ratio={ratio:.2f}"
