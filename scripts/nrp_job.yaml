@@ -53,6 +53,15 @@ spec:
                   - key: nvidia.com/gpu.product
                     operator: In
                     values: [$GPU_PRODUCT]
+                  # A node that fails preflight is retried onto the same node,
+                  # because it is usually the one with free capacity -- which
+                  # burns the whole retry budget on it. Exclude it by hostname:
+                  #   - key: kubernetes.io/hostname
+                  #     operator: NotIn
+                  #     values: [some-bad-node.example.edu]
+                  # hcc-nrp-shor-c6017.unl.edu needed this: correct device, 0
+                  # ECC errors, no throttle, full clock, and naive attention
+                  # returned NaN at B=1 N=256 before an illegal memory access.
           # Preferred, not required: rook-cephfs is the US-West pool, so a
           # us-west node reads the compile cache locally. But this GPU model
           # also lives in us-central and us-east, and pinning to five busy
@@ -132,6 +141,15 @@ spec:
                   - key: nvidia.com/gpu.product
                     operator: In
                     values: [$GPU_PRODUCT]
+                  # A node that fails preflight is retried onto the same node,
+                  # because it is usually the one with free capacity -- which
+                  # burns the whole retry budget on it. Exclude it by hostname:
+                  #   - key: kubernetes.io/hostname
+                  #     operator: NotIn
+                  #     values: [some-bad-node.example.edu]
+                  # hcc-nrp-shor-c6017.unl.edu needed this: correct device, 0
+                  # ECC errors, no throttle, full clock, and naive attention
+                  # returned NaN at B=1 N=256 before an illegal memory access.
           # Preferred, not required: rook-cephfs is the US-West pool, so a
           # us-west node reads the compile cache locally. But this GPU model
           # also lives in us-central and us-east, and pinning to five busy
