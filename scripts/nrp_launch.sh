@@ -10,7 +10,7 @@
 # devices can run at once without colliding.
 set -euo pipefail
 
-GRID=${1:?usage: [GPU=a100|l40|a10|4090|a40] nrp_launch.sh <grid> [nshards] [parallelism]}
+GRID=${1:?usage: [GPU=a100|a40|a10|l40|l40s|4090] nrp_launch.sh <grid> [nshards] [parallelism]}
 NSHARDS=${2:-2}
 PAR=${3:-$NSHARDS}
 : "${IMAGE:?set IMAGE to the pushed image reference}"
@@ -19,13 +19,20 @@ GPU=${GPU:-a100}
 # require is a substring of torch's device name, checked in the pod. The node
 # label is the real guard; this is the second one, and it is what stops a
 # mislabelled node writing rows under the wrong device.
+#
+# CPU is the node's per-GPU share, not what the compile would like. Inductor
+# autotune and nvcc scale with cores, but a pod that never schedules compiles
+# nothing at all: the L40 nodes carry 4 GPUs on 20 cores, so an 8-core request
+# is above a fair share and sat Pending for four hours behind every job that
+# asked for less. Divide the node's cores by its GPUs and round down.
 case "$GPU" in
-  a100) PRODUCT=NVIDIA-A100-SXM4-80GB;     RESOURCE=nvidia.com/a100; REQUIRE=A100-SXM4-80GB; CPU=16; MEM=64Gi ;;
+  a100) PRODUCT=NVIDIA-A100-SXM4-80GB;     RESOURCE=nvidia.com/a100; REQUIRE=A100-SXM4-80GB; CPU=16; MEM=64Gi ;;  # 252c/8g
   a40)  PRODUCT=NVIDIA-A40;                RESOURCE=nvidia.com/a40;  REQUIRE=A40;            CPU=8;  MEM=32Gi ;;
-  l40)  PRODUCT=NVIDIA-L40;                RESOURCE=nvidia.com/gpu;  REQUIRE=L40;            CPU=8;  MEM=32Gi ;;
-  a10)  PRODUCT=NVIDIA-A10;                RESOURCE=nvidia.com/gpu;  REQUIRE=A10;            CPU=8;  MEM=32Gi ;;
-  4090) PRODUCT=NVIDIA-GeForce-RTX-4090;   RESOURCE=nvidia.com/gpu;  REQUIRE=4090;           CPU=8;  MEM=32Gi ;;
-  *) echo "unknown GPU '$GPU'; known: a100 a40 l40 a10 4090" >&2; exit 1 ;;
+  a10)  PRODUCT=NVIDIA-A10;                RESOURCE=nvidia.com/gpu;  REQUIRE=A10;            CPU=8;  MEM=32Gi ;;  # 124c/8g
+  l40)  PRODUCT=NVIDIA-L40;                RESOURCE=nvidia.com/gpu;  REQUIRE=L40;            CPU=4;  MEM=24Gi ;;  # 20c/4g
+  l40s) PRODUCT=NVIDIA-L40S;               RESOURCE=nvidia.com/gpu;  REQUIRE=L40S;           CPU=6;  MEM=24Gi ;;  # 28c/4g
+  4090) PRODUCT=NVIDIA-GeForce-RTX-4090;   RESOURCE=nvidia.com/gpu;  REQUIRE=4090;           CPU=6;  MEM=24Gi ;;  # 28c/4g
+  *) echo "unknown GPU '$GPU'; known: a100 a40 a10 l40 l40s 4090" >&2; exit 1 ;;
 esac
 
 NS=$(kubectl config view --minify -o jsonpath='{..namespace}')
