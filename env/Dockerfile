@@ -52,6 +52,28 @@ RUN python /tmp/resolve_flash_attn.py > /tmp/wheel_url \
     && cat /tmp/wheel_url \
     && pip install "$(cat /tmp/wheel_url)"
 
+# FlashAttention-3, which Dao-AILab publishes no wheel for -- the flash_attn_3
+# name on PyPI is an empty py3-none-any placeholder. Building it here rather
+# than on a rented Hopper host is the point: nvcc needs no H100 present, so an
+# hour of compilation moves off the clock of every pod that needs it.
+#
+# From a clone, not pip's "#subdirectory=hopper": that form extracts the
+# subdirectory without its parent and setup.py then dies on '../README.md'.
+#
+# MAX_JOBS is capped deliberately. Each unit peaks near 10 GB, and sizing it off
+# nproc OOMs -- inside a container `free` reports the host's memory rather than
+# the cgroup limit, so the obvious number looks safe and is not.
+#
+# sm90a only, so the extension will not load anywhere else; impls.has() catches
+# that and reports P4h-fa3 unsupported, which is the right answer off-Hopper.
+ARG FA3_MAX_JOBS=16
+RUN git clone --depth 1 -b ${FLASH_ATTN_TAG} \
+        https://github.com/Dao-AILab/flash-attention.git /tmp/fa \
+    && cd /tmp/fa/hopper \
+    && TORCH_CUDA_ARCH_LIST="9.0a" MAX_JOBS=${FA3_MAX_JOBS} \
+       pip install --no-build-isolation . \
+    && cd / && rm -rf /tmp/fa
+
 # flashinfer-python ships a pure-Python wheel and JIT-compiles kernels on first
 # use. Older versions are sdist-only, and pip then builds them in an isolated
 # environment that re-downloads torch.
@@ -85,7 +107,7 @@ RUN pip install -e .
 
 # Fail the build, not the sweep, if a kernel library did not actually import.
 RUN python -c "\
-import torch, triton, flash_attn, flashinfer; \
+import torch, triton, flash_attn, flashinfer, flash_attn_interface; \
 print('torch', torch.__version__, 'triton', triton.__version__, \
       'flash_attn', flash_attn.__version__, 'flashinfer', flashinfer.__version__)"
 
