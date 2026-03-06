@@ -66,13 +66,22 @@ RUN python /tmp/resolve_flash_attn.py > /tmp/wheel_url \
 #
 # sm90a only, so the extension will not load anywhere else; impls.has() catches
 # that and reports P4h-fa3 unsupported, which is the right answer off-Hopper.
+# A prebuilt wheel in env/wheels/ short-circuits the compile. That is the only
+# way this image builds on a machine that cannot spare ~10 GB per compile unit
+# -- Docker Desktop on a 15 GB laptop gets 11.5 GB, and one unit does not fit.
+# The wheel is gitignored at 406 MB; the image is how it travels.
 ARG FA3_MAX_JOBS=16
-RUN git clone --depth 1 -b ${FLASH_ATTN_TAG} \
+COPY env/wheels/ /tmp/wheels/
+RUN if ls /tmp/wheels/flash_attn_3-*.whl >/dev/null 2>&1; then \
+      pip install /tmp/wheels/flash_attn_3-*.whl; \
+    else \
+      git clone --depth 1 -b ${FLASH_ATTN_TAG} \
         https://github.com/Dao-AILab/flash-attention.git /tmp/fa \
-    && cd /tmp/fa/hopper \
-    && TORCH_CUDA_ARCH_LIST="9.0a" MAX_JOBS=${FA3_MAX_JOBS} \
-       pip install --no-build-isolation . \
-    && cd / && rm -rf /tmp/fa
+      && cd /tmp/fa/hopper \
+      && TORCH_CUDA_ARCH_LIST="9.0a" MAX_JOBS=${FA3_MAX_JOBS} \
+         pip install --no-build-isolation . \
+      && cd / && rm -rf /tmp/fa; \
+    fi && rm -rf /tmp/wheels
 
 # flashinfer-python ships a pure-Python wheel and JIT-compiles kernels on first
 # use. Older versions are sdist-only, and pip then builds them in an isolated
