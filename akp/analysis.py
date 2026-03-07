@@ -48,6 +48,16 @@ def load(raw="results/raw", dispatch=None) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
         raise SystemExit(f"no rows under {raw!r}; expected {raw}/<gpu>/*.jsonl")
+    # config_hash already keys the in-shard resume, but grids overlap: a cell
+    # in both prefill_full and prefill_gqa is written by each. Left alone,
+    # per_cell_median counts those as extra process repeats, so the overlapping
+    # cells get double weight in every winner count and a falsely tight CI.
+    if "config_hash" in df:
+        dup = int(df.config_hash.duplicated().sum())
+        if dup:
+            print("[akp] dropped %d rows sharing a config_hash with an "
+                  "earlier row (overlapping grids)" % dup)
+            df = df.drop_duplicates("config_hash", keep="first")
     if os.path.exists(dispatch):
         d = pd.DataFrame([json.loads(l) for l in open(dispatch, encoding="utf8")])
         # Pods append concurrently, so the same dispatch_id can land more than
@@ -279,19 +289,32 @@ def dispatch_audit(df: pd.DataFrame, impls) -> pd.DataFrame:
             # What a dispatch answer is actually about. The launched kernel is
             # a function of these, not of batch or length, so this is the unit
             # coverage should be judged in.
+            # r["dtype"], not r.dtype: r is a Series, so attribute access
+            # returns the Series' own dtype ("object") and silently collapses
+            # fp16 and bf16 into one class.
             dispatch_class="|".join([r.implementation, r.gpu_name,
-                                     "D%s" % r.head_dim, str(r.dtype),
+                                     "D%s" % r.head_dim, str(r["dtype"]),
                                      "gqa%d" % (r.hq // r.hkv),
                                      str(r["mode"]), str(r.launch)]),
             probed=probed,
             matched=(any(re.search(p, k, re.I) for p in pats) if probed
                      else float("nan")),
-            # The fuse_attention counter misses when an identical graph was
-            # already compiled in the process, so take the launched kernels as
-            # the evidence and let the counter corroborate.
-            fused_into_sdpa=bool(r.get("fuse_attention", 0)) or bool(
+            # Inductor's own counter, and nothing else. This is the direct
+            # instrument for "was the graph rewritten into SDPA", and it is
+            # what invalidator I2 turns on, so it does not get ORed with a
+            # guess. notna first: the column is NaN wherever no counter was
+            # captured and bool(nan) is True, which had marked FA2, Triton and
+            # naive as compiler-rewritten on 96% of rows.
+            fused_into_sdpa=bool(pd.notna(r.get("fuse_attention"))
+                                 and r.get("fuse_attention")),
+            # Corroboration, reported beside the counter rather than merged
+            # into it: an attention-library kernel in a compiled path's trace.
+            # Kept narrow -- "cutlass" and "fmha" appear in ordinary GEMM names
+            # and inside Flash template arguments, so they match the un-fused
+            # path too and cannot support this claim.
+            attn_kernel_in_trace=bool(
                 r.implementation.startswith(("P1-", "D1-")) and probed
-                and re.search(r"flash|fmha|cutlass|cudnn", k, re.I)),
+                and re.search(r"flash_fwd|flash_bwd|cudnn.*attn", k, re.I)),
             observed=observed_backend(k) if probed else "unprobed",
             n_kernels=r.get("n_kernels", 0)))
     return pd.DataFrame(rows)
@@ -409,7 +432,10 @@ def environments(path=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("raw", nargs="?", default="results/raw")
+    # Required, not defaulted: results/raw holds a 68-row laptop smoke shard,
+    # and a bare run silently rebuilt results/processed from it, discarding a
+    # multi-GPU dataset. Naming the input is cheap; losing the output is not.
+    ap.add_argument("raw")
     ap.add_argument("--out", default="results/processed")
     a = ap.parse_args(argv)
 
