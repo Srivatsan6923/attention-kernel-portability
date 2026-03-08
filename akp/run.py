@@ -27,7 +27,7 @@ from pathlib import Path
 import torch
 
 from akp import bench, check
-from akp.impls import Cfg, impls_for, naive_peak_bytes
+from akp.impls import NAIVE_LIKE, Cfg, impls_for, naive_peak_bytes
 
 # Grids are plain Python: the skip rules are conditional and YAML would need a
 # second language to express them.
@@ -219,10 +219,6 @@ def config_hash(cfg, impl, dev, sha, repeat):
 # --------------------------------------------------------------------------- #
 # One cell
 # --------------------------------------------------------------------------- #
-
-NAIVE_LIKE = ("P0-naive", "P1-inductor", "P1-inductor-nofuse",
-              "P1-inductor-where")
-
 
 def oom_predicted_bytes(impl_name, cfg, dev_info):
     """Bytes this cell would need, if that is more than the device has.

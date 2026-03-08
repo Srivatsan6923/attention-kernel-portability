@@ -66,6 +66,13 @@ def itemsize(cfg: Cfg) -> int:
     return torch.finfo(cfg.torch_dtype).bits // 8
 
 
+# The impls that materialise the B*Hq*N*N score matrix, and so are the ones
+# naive_peak_bytes describes. Lives here rather than in run.py because analysis
+# needs it too, and run.py cannot be imported without triton.
+NAIVE_LIKE = ("P0-naive", "P1-inductor", "P1-inductor-nofuse",
+              "P1-inductor-where")
+
+
 def naive_peak_bytes(cfg: Cfg) -> int:
     """Peak allocation of the score-matrix impls: scores, fp32 upcast, probs.
 

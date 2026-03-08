@@ -98,6 +98,38 @@ def derive(df: pd.DataFrame, env: dict | None = None) -> pd.DataFrame:
     peak = df.gpu_name.map(_peak)
     df["bw_util"] = df.eff_bw_gbs / peak
 
+    # Device constants live only in the environment manifest, but the
+    # normalized views (per-SM, against L2) need them beside every row.
+    df["sm_count"] = df.gpu_name.map(lambda g: (env or {}).get(g, {}).get("sm_count"))
+    df["l2_bytes"] = df.gpu_name.map(lambda g: (env or {}).get(g, {}).get("l2_bytes"))
+    df["peak_bw_gbs"] = peak
+
+    # Working set: the tensors the math requires, Q and O at q_len, K and V at
+    # N. Hkv, not the expanded head count kv_bytes uses -- that one is traffic,
+    # this one is footprint, and the expansion is a view of one allocation.
+    from akp.impls import NAIVE_LIKE
+    qo = 2 * df.batch * df.hq * np.where(pre, df.seq_len, 1) * df.head_dim * itemsize
+    kv = 2 * df.batch * df.hkv * df.seq_len * df.head_dim * itemsize
+    # Only the score-matrix impls materialise B*Hq*N*N. Charging it to the fused
+    # kernels would hide the one thing that lets them fit.
+    scores = np.where(df.implementation.isin(NAIVE_LIKE),
+                      df.batch * df.hq * df.seq_len ** 2 * itemsize, 0)
+    df["working_set_bytes"] = qo + kv + scores
+    # 2**20, not 1e6: bench.peak_memory_mb divides by 2**20, so the column is
+    # MiB and a decimal-MB conversion would inflate every ratio by 4.9%.
+    # fwd_bwd holds saved activations and grads this does not model, so those
+    # rows read high by construction. Below 1 is not an error either: the
+    # compiled arms are charged the score matrix because they might materialise
+    # it, and a ratio under 1 is the evidence that Inductor fused it away.
+    df["mem_overhead"] = df.peak_allocated_mb * 2 ** 20 / df.working_set_bytes
+
+    # Nothing here is measured traffic: there is no profiler data in this
+    # dataset. Decode divides by the KV stream it must read; prefill divides by
+    # the working set, which is a model of the algorithmic minimum and ignores
+    # every tile re-read. Treat it as an ordering, not a roofline coordinate.
+    # fwd_bwd also carries the assumed 3.5x in the numerator (see flops above).
+    df["arith_intensity"] = flops / np.where(pre, df.working_set_bytes, df.kv_bytes)
+
     # Kept rather than excluded (see usable), so the rate is reportable in
     # threats to validity instead of silently shaping the dataset.
     if "tel_throttle" in df:
@@ -122,6 +154,119 @@ def spread(cells: pd.DataFrame) -> pd.DataFrame:
     out = (g.max() / g.min()).rename("spread").reset_index()
     out["regime"] = out.cell.str.split("|").str[0]
     return out
+
+
+def _series(cells: pd.DataFrame, drop: int) -> pd.Series:
+    """The cell key with one field removed, for pairing along that axis."""
+    p = cells.cell.str.split("|", expand=True)
+    return p.drop(columns=drop).apply("|".join, axis=1)
+
+
+def scaling(cells: pd.DataFrame) -> pd.DataFrame:
+    """Empirical alpha in T(N) ~ N^alpha, per (gpu, impl, N-stripped cell).
+
+    The fit can only span the N values that impl actually completed, and the
+    score-matrix impls lose their large-N points to OOM_PREDICTED: 50 of
+    P0-naive's 73 prefill series stop at N=1024 where the fused kernels reach
+    8192. So alpha is not comparable across impls without also reading the
+    range it was fitted over -- P0-naive measures 1.90 on its truncated series
+    against 1.55 on the ones that ran to the end, and neither number is wrong,
+    they are answers about different N. n_min, n_max and n_points travel with
+    alpha for exactly that reason.
+    """
+    d = cells.assign(n=cells.cell.str.split("|").str[5].str[1:].astype(float),
+                     series=_series(cells, 5))
+    out = []
+    for (g, impl, s), sub in d.groupby(["gpu_name", "implementation", "series"]):
+        t = sub.groupby("n").median_us.median()      # one point per length
+        # Two points fit a line exactly and r2 is 1 by construction, which reads
+        # as a confident exponent off nothing.
+        if len(t) < 3:
+            continue
+        x, y = np.log(t.index.values), np.log(t.values)
+        a, b = np.polyfit(x, y, 1)
+        ss = ((y - y.mean()) ** 2).sum()
+        out.append(dict(gpu_name=g, implementation=impl, series=s,
+                        regime=s.split("|")[0], alpha=float(a),
+                        r2=float(1 - ((y - (a * x + b)) ** 2).sum() / ss)
+                        if ss else np.nan,
+                        n_points=len(t), n_min=float(t.index.min()),
+                        n_max=float(t.index.max())))
+    return pd.DataFrame(out)
+
+
+def portability(cells: pd.DataFrame) -> pd.DataFrame:
+    """What standardising on one backend costs: best-in-cell / this impl.
+
+    P <= 1, and P == 1 means this impl won the cell. Restricted to the cells
+    every GPU ran, the same shared set winner_flips counts over -- otherwise an
+    impl buys portability by being absent wherever it loses.
+    """
+    shared = cells.groupby("cell").gpu_name.nunique()
+    d = cells[cells.cell.isin(shared[shared == shared.max()].index)]
+    best = d.groupby(["gpu_name", "cell"]).median_us.transform("min")
+    return pd.DataFrame({"gpu_name": d.gpu_name, "implementation": d.implementation,
+                         "cell": d.cell, "regime": d.cell.str.split("|").str[0],
+                         "median_us": d.median_us, "best_us": best,
+                         "p_ratio": best / d.median_us}).reset_index(drop=True)
+
+
+def cache_sensitivity(df: pd.DataFrame) -> pd.DataFrame:
+    """Cold-L2 penalty, pairing rows that differ only in the cache field.
+
+    inner_k is part of the pairing, not a label on it. block_bench zeroes the
+    flush buffer once per BLOCK of k calls, so only k == 1 is genuinely cold --
+    and k is chosen per process from a timing probe, so one cell's five repeats
+    can land on different k. Collapsing them would report a k=3 block, where
+    two of every three calls are warm, as a cold measurement. Cold groups with
+    no warm partner at their k are kept with us_warm null rather than dropped.
+    """
+    d = usable(df)
+    keys = ["gpu_name", "implementation", "key", "inner_k"]
+    g = (d.assign(key=_series(d, 9))
+          .groupby(keys + ["cache"])
+          .agg(us=("median_us", "median"), cell=("cell", "first"),
+               n=("median_us", "size")).reset_index())
+    m = (g[g.cache == "cold"].drop(columns="cache")
+         .merge(g[g.cache == "warm"].drop(columns="cache"), on=keys,
+                how="left", suffixes=("_cold", "_warm")))
+    m["sensitivity"] = (m.us_cold - m.us_warm) / m.us_warm
+    # Carried per row the way inversions carries pairs_examined: the panel has
+    # to state how few pairs there are, and recomputing it there would drift.
+    m["n_pairs"] = int(m.sensitivity.notna().sum())
+    return m.drop(columns="key").rename(columns={"n_cold": "reps_cold",
+                                                 "n_warm": "reps_warm"})
+
+
+def oom_calibration(df: pd.DataFrame) -> pd.DataFrame:
+    """Predicted peak against measured peak, for the score-matrix impls.
+
+    The OOM_PREDICTED cells were refused rather than run, so the parquet holds
+    no predicted/actual pair anywhere. Recomputing the same prediction on the OK
+    rows is the only way to ask whether the predictor is calibrated; the refused
+    cells come along as a right-censored band (actual_gb null).
+    """
+    from akp.impls import NAIVE_LIKE, Cfg, naive_peak_bytes
+
+    out = []
+    for r in df[df.implementation.isin(NAIVE_LIKE)
+                & df.status.isin(("OK", "OOM_PREDICTED"))].itertuples():
+        cfg = Cfg(regime=r.regime, B=int(r.batch), Hq=int(r.hq), Hkv=int(r.hkv),
+                  D=int(r.head_dim), N=int(r.seq_len), dtype=r.dtype,
+                  mode=r.mode, launch=r.launch, cache=r.cache,
+                  causal=bool(r.causal))
+        # /1e9 to match the decimal GB run.py records in predicted_peak_gb;
+        # peak_allocated_mb is MiB, so it needs 2**20 before it can be compared.
+        pred = naive_peak_bytes(cfg) / 1e9
+        act = (r.peak_allocated_mb * 2 ** 20 / 1e9 if r.status == "OK"
+               else np.nan)
+        out.append(dict(gpu_name=r.gpu_name, implementation=r.implementation,
+                        cell=r.cell, predicted_gb=pred, actual_gb=act,
+                        ratio=pred / act if act > 0 else np.nan,
+                        status=r.status))
+    # The predictor models the forward score matrix only, so fwd_bwd rows
+    # under-predict by construction; the mode is in the cell key, facet on it.
+    return pd.DataFrame(out)
 
 
 def observed_backend(kernels: str) -> str:
@@ -215,6 +360,36 @@ def _boot_ratio(a, b, n=2000, seed=0):
     rb = rng.choice(b, (n, len(b)), replace=True).mean(1)
     r = ra / rb
     return np.percentile(r, 2.5), np.percentile(r, 97.5)
+
+
+def _boot_mean(x, n=2000, seed=0):
+    rng = np.random.default_rng(seed)
+    x = np.asarray(x, float)
+    m = rng.choice(x, (n, len(x)), replace=True).mean(1)
+    return np.percentile(m, 2.5), np.percentile(m, 97.5)
+
+
+def stability(cells: pd.DataFrame) -> pd.DataFrame:
+    """Between-process dispersion -- the term the 5-process design exists for.
+
+    Reps inside one process share clocks and allocator state, so the only
+    honest unit of variation is the per-process median. Runs on
+    per_cell_median's output before main() drops the samples column.
+    """
+    out = []
+    for r in cells.itertuples():
+        s = np.asarray(r.samples, float)
+        lo, hi = _boot_mean(s)
+        out.append(dict(
+            gpu_name=r.gpu_name, implementation=r.implementation, cell=r.cell,
+            regime=r.cell.split("|")[0], n_repeats=len(s), mean_us=s.mean(),
+            # ddof=1: five processes are a sample of the machine's
+            # process-to-process behaviour, not the population of them.
+            std_us=s.std(ddof=1) if len(s) > 1 else np.nan,
+            ci_lo=lo, ci_hi=hi, rel_ci_width=(hi - lo) / (2 * r.median_us)))
+    d = pd.DataFrame(out)
+    d["cv"] = d.std_us / d.mean_us
+    return d
 
 
 def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05) -> pd.DataFrame:
@@ -457,7 +632,13 @@ def main(argv=None):
             obj.to_parquet(path)
 
     write("rows.parquet", df)
+    write("scaling.parquet", scaling(cells))
+    write("portability.parquet", portability(cells))
+    # Before the drop below: the per-repeat medians are the whole input.
+    write("stability.parquet", stability(cells))
     write("cells.parquet", cells.drop(columns=["samples"]))
+    write("cache_sensitivity.parquet", cache_sensitivity(df))
+    write("oom_calibration.parquet", oom_calibration(df))
 
     audit = dispatch_audit(df, IMPLS)
     write("dispatch_audit.parquet", audit)
