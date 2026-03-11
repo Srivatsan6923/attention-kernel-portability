@@ -33,7 +33,11 @@ spec:
       - action: Ignore
         onPodConditions:
           - type: DisruptionTarget
-  activeDeadlineSeconds: 43200
+  # Counts wall time from creation, including the wait for a free GPU --
+  # which on a contended cluster is nearly all of it. At 12 h a prewarm
+  # died of queueing rather than of any fault, and the retry budget went
+  # on scheduling scarcity. Same 72 h the sweep gets.
+  activeDeadlineSeconds: 259200
   template:
     spec:
       restartPolicy: Never
