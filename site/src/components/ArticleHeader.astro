@@ -1,0 +1,43 @@
+---
+import FormattedDate from './FormattedDate.astro';
+
+interface Props {
+	eyebrow?: string;
+	title: string;
+	standfirst: string;
+	author: string;
+	date: Date;
+	readTime: string;
+	links?: { label: string; href: string }[];
+}
+
+const {
+	eyebrow = 'ML SYSTEMS · GPU INFERENCE',
+	title,
+	standfirst,
+	author,
+	date,
+	readTime,
+	links = [],
+} = Astro.props;
+---
+
+<header class="article-header">
+	<p class="eyebrow">{eyebrow}</p>
+	<h1 class="article-title">{title}</h1>
+	<p class="standfirst">{standfirst}</p>
+	<div class="article-meta">
+		<span>{author}</span>
+		<FormattedDate date={date} />
+		<span>{readTime}</span>
+	</div>
+	{
+		links.length > 0 && (
+			<nav class="article-links" aria-label="Article resources">
+				{links.map((l) => (
+					<a href={l.href}>{l.label}</a>
+				))}
+			</nav>
+		)
+	}
+</header>

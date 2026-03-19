@@ -1,0 +1,14 @@
+---
+interface Props {
+	caption?: string;
+	id?: string;
+	long?: boolean;
+}
+
+const { caption, id, long = false } = Astro.props;
+---
+
+<figure class:list={['research-table', long && 'long']} id={id}>
+	<div class="table-scroll"><slot /></div>
+	{caption && <figcaption class="table-caption">{caption}</figcaption>}
+</figure>

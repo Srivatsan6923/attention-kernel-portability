@@ -1,0 +1,278 @@
+---
+// Faceted prefill small-multiples: one panel per GPU, one line per
+// implementation. The metric switches between latency, achieved TFLOP/s and
+// peak memory. Every value is read from public/data/web.json at runtime.
+interface Props {
+	id?: string;
+}
+const { id = 'fig-prefill-latency' } = Astro.props;
+---
+
+<figure class="figure-wide prefill-latency" id={id} data-prefill-latency>
+	<div class="chart-head">
+		<div class="chart-title" data-title></div>
+		<label class="chart-control">
+			<span>Metric</span>
+			<select data-metric>
+				<option value="prefill_latency">Latency (us)</option>
+				<option value="prefill_tflops">Throughput (TFLOP/s)</option>
+				<option value="prefill_memory">Peak memory (MB)</option>
+			</select>
+		</label>
+	</div>
+	<div class="chart-legend" data-legend></div>
+	<div class="chart-body" data-plot></div>
+	<figcaption data-caption></figcaption>
+</figure>
+
+<script>
+	import * as Plot from '@observablehq/plot';
+
+	// Fixed backend identity: the same seven colours in every chart on the site.
+	const FAMILY: [RegExp, string, string][] = [
+		[/^P1-inductor|^D1-inductor/, '#7e57c2', 'TorchInductor'],
+		[/^P2[bcd]?-sdpa|^D2-sdpa/, '#1769aa', 'SDPA'],
+		[/^P3-triton/, '#2a9d8f', 'Triton'],
+		[/^P4h-fa3/, '#c4562a', 'FlashAttention-3'],
+		[/^P4-fa2|^D3-fa-kvcache|^D6-fa-prefill-at-1/, '#e08c3a', 'FlashAttention-2'],
+		[/^D4-flashinfer/, '#2e9e5b', 'FlashInfer'],
+		[/./, '#9e9e9e', 'PyTorch reference'],
+	];
+	// Variants inside one family keep the colour and separate by dash pattern.
+	const DASH = ['', '5,3', '1.5,2.5', '7,3,1.5,3'];
+
+	const METRICS = {
+		prefill_latency: {
+			label: 'median latency (us)',
+			type: 'log',
+			title: 'Prefill latency against sequence length',
+		},
+		prefill_tflops: {
+			label: 'achieved TFLOP/s',
+			type: 'linear',
+			title: 'Prefill achieved throughput against sequence length',
+		},
+		prefill_memory: {
+			label: 'peak memory (MB)',
+			type: 'log',
+			title: 'Prefill peak memory against sequence length',
+		},
+	} as const;
+
+	type Metric = keyof typeof METRICS;
+
+	const familyOf = (impl: string) => FAMILY.find(([re]) => re.test(impl))!;
+
+	function render(root: HTMLElement, web: any, metric: Metric) {
+		const spec = METRICS[metric];
+		const series = web[metric] ?? {};
+
+		// Panel order by compute capability, then by name so L40 precedes L40S.
+		const gpus: string[] = web.devices
+			.filter((d: any) => series[d.gpu])
+			.sort(
+				(a: any, b: any) =>
+					Number(String(a.cc).replace(/\D/g, '')) - Number(String(b.cc).replace(/\D/g, '')) ||
+					a.gpu.localeCompare(b.gpu)
+			)
+			.map((d: any) => d.gpu);
+
+		const impls: string[] = [...new Set(gpus.flatMap((g) => Object.keys(series[g])))].sort();
+		const dashOf = new Map<string, string>();
+		for (const [, colour] of FAMILY) {
+			impls
+				.filter((i) => familyOf(i)[1] === colour)
+				.forEach((i, k) => dashOf.set(i, DASH[k % DASH.length]));
+		}
+
+		const rows: { gpu: string; impl: string; x: number; y: number }[] = [];
+		for (const gpu of gpus) {
+			for (const impl of impls) {
+				const s = series[gpu]?.[impl];
+				if (!s) continue;
+				s.x.forEach((x: number, k: number) => {
+					const y = s.y[k];
+					// A log axis carries neither a zero nor a missing point.
+					if (y != null && (spec.type === 'linear' || y > 0)) rows.push({ gpu, impl, x, y });
+				});
+			}
+		}
+
+		const narrow = root.clientWidth < 760;
+		const width = Math.max(320, root.clientWidth || 900);
+		const facet: any = narrow ? { fy: 'gpu' } : { fx: 'gpu' };
+
+		const plot = Plot.plot({
+			width,
+			height: narrow ? 180 * gpus.length + 50 : 320,
+			marginLeft: 58,
+			marginBottom: 42,
+			marginRight: narrow ? 62 : 10,
+			style: {
+				background: 'transparent',
+				color: 'var(--text-secondary)',
+				fontFamily: 'var(--font-mono)',
+				fontSize: '11px',
+				fontVariantNumeric: 'tabular-nums',
+			},
+			x: {
+				type: 'log',
+				label: 'sequence length N',
+				ticks: [...new Set(rows.map((r) => r.x))].sort((a, b) => a - b),
+				tickFormat: (d: number) => String(d),
+			},
+			y: { type: spec.type, label: spec.label, grid: true, zero: spec.type === 'linear' },
+			fx: narrow ? undefined : { domain: gpus, label: null },
+			fy: narrow ? { domain: gpus, label: null } : undefined,
+			color: { domain: impls, range: impls.map((i) => familyOf(i)[1]) },
+			marks: [
+				Plot.frame({ stroke: 'var(--border)', strokeWidth: 0.6 }),
+				Plot.line(rows, {
+					...facet,
+					x: 'x',
+					y: 'y',
+					z: 'impl',
+					stroke: 'impl',
+					strokeWidth: 1.4,
+					strokeDasharray: (d: any) => dashOf.get(d.impl) || null,
+				}),
+				Plot.dot(rows, { ...facet, x: 'x', y: 'y', fill: 'impl', r: 1.6 }),
+			],
+		});
+
+		root.replaceChildren(plot);
+		return { impls, dashOf };
+	}
+
+	function legend(root: HTMLElement, impls: string[], dashOf: Map<string, string>) {
+		root.replaceChildren(
+			...impls.map((impl) => {
+				const [, colour, family] = familyOf(impl);
+				const dash = dashOf.get(impl);
+				const item = document.createElement('span');
+				item.className = 'legend-item';
+				item.title = `${impl} (${family})`;
+				item.innerHTML =
+					`<svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" ` +
+					`stroke="${colour}" stroke-width="1.6"${dash ? ` stroke-dasharray="${dash}"` : ''}/></svg>` +
+					`<span>${impl}</span>`;
+				return item;
+			})
+		);
+	}
+
+	let web: Promise<any> | null = null;
+	const load = () =>
+		(web ??= fetch(`${import.meta.env.BASE_URL.replace(/\/?$/, '/')}data/web.json`).then((r) =>
+			r.json()
+		));
+
+	function mount(fig: HTMLElement) {
+		const plotEl = fig.querySelector<HTMLElement>('[data-plot]')!;
+		const select = fig.querySelector<HTMLSelectElement>('[data-metric]')!;
+
+		load().then((data: any) => {
+			const s = data.prefill_slice;
+			fig.querySelector<HTMLElement>('[data-caption]')!.textContent =
+				`Slice: batch ${s.batch}, head dim ${s.head_dim}, ${s.dtype}, ${s.mode} pass. ` +
+				`Each point is the median over the timed repeats of one (implementation, GPU, N) cell, ` +
+				`and panels run in compute-capability order. An implementation with no line in a panel ` +
+				`returned no timed run for that cell; the coverage table keeps unsupported, predicted-OOM ` +
+				`and OOM apart rather than merging them.`;
+
+			const draw = () => {
+				const metric = select.value as Metric;
+				fig.querySelector<HTMLElement>('[data-title]')!.textContent = METRICS[metric].title;
+				const { impls, dashOf } = render(plotEl, data, metric);
+				legend(fig.querySelector<HTMLElement>('[data-legend]')!, impls, dashOf);
+			};
+			draw();
+			select.addEventListener('change', draw);
+
+			let w = plotEl.clientWidth;
+			new ResizeObserver(() => {
+				if (Math.abs(plotEl.clientWidth - w) > 8) {
+					w = plotEl.clientWidth;
+					draw();
+				}
+			}).observe(plotEl);
+		});
+	}
+
+	// The figure fetches and draws itself the first time it scrolls into view, so
+	// no hydration directive is needed on the tag.
+	const seen = new IntersectionObserver((entries) => {
+		for (const e of entries) {
+			if (!e.isIntersecting) continue;
+			seen.unobserve(e.target);
+			mount(e.target as HTMLElement);
+		}
+	});
+	for (const fig of document.querySelectorAll<HTMLElement>('[data-prefill-latency]')) {
+		if (fig.dataset.mounted) continue;
+		fig.dataset.mounted = '1';
+		seen.observe(fig);
+	}
+</script>
+
+<style>
+	.prefill-latency {
+		margin: 40px 0;
+	}
+	.chart-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 24px;
+		border-bottom: 1px solid var(--border);
+		padding-bottom: 8px;
+	}
+	.chart-title {
+		font-family: var(--font-heading);
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+	.chart-control {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		font-family: var(--font-body);
+		font-size: 14px;
+		color: var(--text-secondary);
+	}
+	.chart-control select {
+		font-family: var(--font-mono);
+		font-size: 13px;
+		color: var(--text-primary);
+		background: var(--background);
+		border: 1px solid var(--border);
+		padding: 3px 6px;
+	}
+	.chart-legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px 18px;
+		margin: 10px 0 4px;
+	}
+	.chart-legend :global(.legend-item) {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		color: var(--text-secondary);
+	}
+	.chart-body {
+		min-height: 320px;
+		overflow-x: auto;
+	}
+	figcaption {
+		font-family: var(--font-body);
+		font-size: 14px;
+		line-height: 1.55;
+		color: var(--text-secondary);
+		max-width: 780px;
+		margin-top: 10px;
+	}
+</style>

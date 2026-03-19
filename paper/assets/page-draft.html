@@ -1,0 +1,878 @@
+<title>Attention Kernel Portability</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;450;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js"></script>
+
+<style>
+:root{
+  --ground:#FCFCFD; --panel:#FFFFFF; --ink:#111318; --ink-2:#4A5160; --ink-3:#767E8E;
+  --rule:#E3E6EC; --rule-2:#EDEFF3;
+  --accent:#1B4F9C; --accent-soft:#EAF0F9;
+  --ok:#1F7A46; --warn:#9A6410; --bad:#A32F26; --neutral:#8A92A0;
+  --measure:880px;
+}
+:root:not([data-theme="light"]){ @media (prefers-color-scheme: dark){} }
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0F1116; --panel:#161920; --ink:#E8EAEF; --ink-2:#A8AEBB; --ink-3:#7B8291;
+    --rule:#262B35; --rule-2:#1E222A;
+    --accent:#7BA7E8; --accent-soft:#182234;
+    --ok:#5FBE87; --warn:#D6A050; --bad:#E0776C; --neutral:#79808E;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0F1116; --panel:#161920; --ink:#E8EAEF; --ink-2:#A8AEBB; --ink-3:#7B8291;
+  --rule:#262B35; --rule-2:#1E222A;
+  --accent:#7BA7E8; --accent-soft:#182234;
+  --ok:#5FBE87; --warn:#D6A050; --bad:#E0776C; --neutral:#79808E;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  font-size:16px; line-height:1.62; -webkit-font-smoothing:antialiased;
+}
+code,kbd,.mono,td.num,th.num{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+
+.wrap{display:grid; grid-template-columns:230px minmax(0,1fr); gap:56px;
+      max-width:1240px; margin:0 auto; padding:56px 32px 120px}
+@media(max-width:960px){ .wrap{grid-template-columns:1fr; gap:0; padding:32px 20px 80px} }
+
+/* table of contents */
+nav.toc{position:sticky; top:32px; align-self:start; font-size:13.5px; line-height:1.5}
+@media(max-width:960px){ nav.toc{position:static; margin-bottom:40px;
+  border-bottom:1px solid var(--rule); padding-bottom:24px} }
+nav.toc .lbl{font-size:11px; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--ink-3); margin-bottom:12px}
+nav.toc a{display:block; padding:5px 0 5px 11px; color:var(--ink-2);
+  text-decoration:none; border-left:2px solid var(--rule)}
+nav.toc a:hover{color:var(--ink)}
+nav.toc a.on{color:var(--accent); border-left-color:var(--accent); font-weight:600}
+nav.toc a:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+main{max-width:var(--measure); min-width:0}
+h1{font-size:34px; line-height:1.2; font-weight:600; letter-spacing:-.015em;
+   margin:0 0 12px; text-wrap:balance}
+.sub{font-size:18px; color:var(--ink-2); margin:0 0 28px; text-wrap:balance}
+h2{font-size:21px; font-weight:600; letter-spacing:-.008em; margin:56px 0 4px;
+   padding-top:24px; border-top:1px solid var(--rule); text-wrap:balance}
+h2 .n{color:var(--ink-3); font-weight:400; margin-right:10px;
+      font-family:"IBM Plex Mono",monospace; font-size:16px}
+h3{font-size:16px; font-weight:600; margin:32px 0 6px}
+p{margin:0 0 14px; max-width:68ch}
+a{color:var(--accent)}
+
+.meta{font-size:14px; color:var(--ink-2); border-top:1px solid var(--rule);
+      border-bottom:1px solid var(--rule); padding:16px 0; margin:0 0 8px}
+.meta .who{color:var(--ink); font-weight:600}
+.meta .stack{font-family:"IBM Plex Mono",monospace; font-size:12.5px;
+             color:var(--ink-3); margin-top:5px}
+.links{display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 0}
+.links a{font-size:13px; padding:5px 12px; border:1px solid var(--rule);
+  border-radius:3px; text-decoration:none; color:var(--ink-2); background:var(--panel)}
+.links a:hover{border-color:var(--accent); color:var(--accent)}
+
+/* metric cards */
+.cards{display:grid; grid-template-columns:repeat(4,1fr); gap:1px;
+  background:var(--rule); border:1px solid var(--rule); margin:22px 0 20px}
+@media(max-width:760px){ .cards{grid-template-columns:repeat(2,1fr)} }
+.card{background:var(--panel); padding:16px 16px 14px}
+.card .v{font-size:26px; font-weight:600; letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; line-height:1.1}
+.card .k{font-size:11.5px; letter-spacing:.05em; text-transform:uppercase;
+  color:var(--ink-3); margin-top:7px}
+.card .note{font-size:12px; color:var(--ink-3); margin-top:3px}
+
+table{border-collapse:collapse; width:100%; font-size:14px; margin:14px 0 6px}
+.scroll{overflow-x:auto; margin:14px 0 6px}
+.scroll table{margin:0}
+th{text-align:left; font-weight:600; font-size:12px; letter-spacing:.05em;
+   text-transform:uppercase; color:var(--ink-3); padding:7px 12px 7px 0;
+   border-bottom:1px solid var(--rule); white-space:nowrap}
+td{padding:7px 12px 7px 0; border-bottom:1px solid var(--rule-2);
+   vertical-align:top}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums;
+   padding-right:18px}
+tbody tr:last-child td{border-bottom:1px solid var(--rule)}
+caption{caption-side:top; text-align:left; font-size:13px; color:var(--ink-2);
+  padding-bottom:8px}
+
+figure{margin:22px 0 8px}
+figure .cap{font-size:13px; color:var(--ink-2); margin-bottom:10px}
+figure .cap b{color:var(--ink); font-weight:600}
+.plot{width:100%; background:var(--panel); border:1px solid var(--rule)}
+.obs{margin:12px 0 0; padding:0; list-style:none}
+.obs li{position:relative; padding-left:17px; margin-bottom:7px;
+  font-size:14.5px; color:var(--ink-2); max-width:68ch}
+.obs li::before{content:""; position:absolute; left:0; top:.62em; width:7px;
+  height:1px; background:var(--accent)}
+.obs li b{color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums}
+
+.notice{border:1px solid var(--rule); border-left:3px solid var(--warn);
+  background:var(--panel); padding:13px 16px; margin:18px 0; font-size:14px;
+  color:var(--ink-2)}
+.notice b{color:var(--ink)}
+.controls{display:flex; flex-wrap:wrap; gap:14px; align-items:center;
+  margin:0 0 10px; font-size:13px}
+.controls label{color:var(--ink-3); display:flex; align-items:center; gap:6px}
+select{font:inherit; font-size:13px; padding:4px 8px; background:var(--panel);
+  color:var(--ink); border:1px solid var(--rule); border-radius:3px}
+select:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+
+.pill{display:inline-block; padding:1px 7px; border-radius:2px; font-size:11.5px;
+  font-family:"IBM Plex Mono",monospace; border:1px solid}
+.pill.ok{color:var(--ok); border-color:var(--ok); background:transparent}
+.pill.warn{color:var(--warn); border-color:var(--warn)}
+.pill.bad{color:var(--bad); border-color:var(--bad)}
+.pill.neu{color:var(--ink-3); border-color:var(--rule)}
+
+pre{background:var(--panel); border:1px solid var(--rule); padding:13px 15px;
+  overflow-x:auto; font-size:12.5px; line-height:1.55; margin:12px 0}
+footer{margin-top:64px; padding-top:22px; border-top:1px solid var(--rule);
+  font-size:13px; color:var(--ink-3)}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <div class="lbl">Contents</div>
+  <a href="#summary">Summary</a>
+  <a href="#question">Question</a>
+  <a href="#scope">Scope</a>
+  <a href="#provenance">Provenance</a>
+  <a href="#trust">Validity</a>
+  <a href="#prefill">Prefill</a>
+  <a href="#decode">Decode &amp; KV cache</a>
+  <a href="#attribution">Attribution</a>
+  <a href="#portability">Portability</a>
+  <a href="#guidance">Guidance</a>
+  <a href="#repro">Reproducibility</a>
+</nav>
+
+<main>
+  <h1>Attention Kernel Portability Across GPU Architectures</h1>
+  <p class="sub">A dispatch-verified study of prefill and KV-cache decode across Ampere, Ada and Hopper.</p>
+  <div class="meta">
+    <div class="who">Srivatsan Sarvesan</div>
+    <div class="stack" id="stack"></div>
+    <div class="links">
+      <a href="https://github.com/Srivatsan6923/attention-kernel-portability">Code</a>
+      <a href="https://github.com/Srivatsan6923/attention-kernel-portability#results">Raw results</a>
+      <a href="https://github.com/Srivatsan6923/attention-kernel-portability#reproduce">Reproduce</a>
+    </div>
+  </div>
+
+  <h2 id="summary"><span class="n">1</span>Summary</h2>
+  <div class="cards" id="cards"></div>
+  <p id="summary-para"></p>
+
+  <h2 id="question"><span class="n">2</span>Question</h2>
+  <p>Attention libraries expose several optimized paths, but the requested API does
+  not always identify the kernel that executes, and a ranking measured on one GPU
+  need not hold on another. This study asks when the fastest attention backend
+  changes across hardware and workload regime, why it changes, and whether a
+  lightweight selector can predict it.</p>
+  <table>
+    <thead><tr><th>Question</th><th>Measurement</th></tr></thead>
+    <tbody>
+      <tr><td>Do rankings transfer across GPUs?</td><td>Matched-cell winner change and rank correlation</td></tr>
+      <tr><td>Does prefill behaviour predict decode behaviour?</td><td>Regime-specific latency, bandwidth and winner maps</td></tr>
+      <tr><td>Did the requested kernel actually execute?</td><td>Per-cell CUDA dispatch traces</td></tr>
+      <tr><td>Is an observed difference real?</td><td>Cluster bootstrap over process repeats plus a 10&nbsp;% practical threshold</td></tr>
+      <tr><td>Can the result guide deployment?</td><td>Held-out backend-selection regret</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="scope"><span class="n">3</span>Experimental scope</h2>
+  <div class="scroll" id="devices"></div>
+  <table id="scope-table">
+    <tbody>
+      <tr><td style="width:130px">Prefill</td><td id="sc-prefill"></td></tr>
+      <tr><td>Decode</td><td id="sc-decode"></td></tr>
+      <tr><td>Backends</td><td>PyTorch reference, TorchInductor (3 variants), SDPA forced to memory-efficient / flash / cuDNN, Triton, FlashAttention-2, FlashAttention-3, FlashInfer paged decode</td></tr>
+      <tr><td>Timing</td><td>CUDA events, L2 flushed between measurements, implementations interleaved within each configuration, 5 process-level repeats</td></tr>
+      <tr><td>Validity</td><td>Per-cell dispatch trace and a correctness gate at twice the naive error in the same dtype</td></tr>
+      <tr><td>Profiling</td><td>Not available on any platform used</td></tr>
+    </tbody>
+  </table>
+  <ul class="obs">
+    <li>Only cells that pass the correctness gate enter any performance comparison; exclusions are reported rather than filtered silently.</li>
+    <li id="sc-note"></li>
+  </ul>
+
+  <h2 id="provenance"><span class="n">4</span>Implementation provenance</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Path</th><th>Source</th><th>Work done here</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">P0 / D0 naive</td><td>Written locally</td><td>Reference semantics, chunked fp32 accumulation, numerical validation</td></tr>
+      <tr><td class="mono">P1 / D1 inductor</td><td>PyTorch compiler</td><td>Compilation, pattern-matcher counter capture, dispatch verification</td></tr>
+      <tr><td class="mono">P2b / P2c / P2d</td><td>PyTorch, cuDNN, CUTLASS</td><td>Forced backend selection and fallback detection</td></tr>
+      <tr><td class="mono">P3 triton</td><td>Triton tutorial 06, pinned commit</td><td>BF16 adaptation, integration, correctness validation</td></tr>
+      <tr><td class="mono">P4 / P4h</td><td>Dao-AILab flash-attn</td><td>Integration, compatibility testing, binary provenance audit</td></tr>
+      <tr><td class="mono">D3 / D4</td><td>flash-attn, FlashInfer</td><td>KV-cache and paged-decode integration, semantics tests</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul class="obs">
+    <li>The Triton path carries a source-level BF16 modification. The CUDA library paths were integrated and measured, not authored here.</li>
+    <li>Every performance label refers to the kernel verified to have executed, not only to the API that was called.</li>
+  </ul>
+
+  <h2 id="trust"><span class="n">5</span>Validity before performance</h2>
+  <figure>
+    <div class="cap"><b>Figure 1.</b> Attempted cells by outcome, per implementation and device.</div>
+    <div class="plot" id="fig-coverage" style="height:460px"></div>
+  </figure>
+  <ul class="obs" id="obs-coverage"></ul>
+
+  <figure>
+    <div class="cap"><b>Figure 2.</b> Requested implementation against the kernel family observed in the CUDA trace.</div>
+    <div class="plot" id="fig-dispatch" style="height:420px"></div>
+  </figure>
+  <ul class="obs" id="obs-dispatch"></ul>
+
+  <h3>Correctness</h3>
+  <div class="scroll" id="tbl-correct"></div>
+  <ul class="obs" id="obs-correct"></ul>
+
+  <h2 id="prefill"><span class="n">6</span>Prefill</h2>
+  <figure>
+    <div class="cap"><b>Figure 3.</b> <span id="cap-prefill"></span></div>
+    <div class="controls">
+      <label>Metric
+        <select id="pf-metric">
+          <option value="prefill_latency">median latency (µs)</option>
+          <option value="prefill_tflops">achieved TFLOP/s</option>
+          <option value="prefill_memory">peak allocated (MB)</option>
+        </select>
+      </label>
+    </div>
+    <div class="plot" id="fig-prefill" style="height:400px"></div>
+  </figure>
+  <ul class="obs" id="obs-prefill"></ul>
+
+  <figure>
+    <div class="cap"><b>Figure 4.</b> Speedup over forced SDPA-flash across batch and sequence length.</div>
+    <div class="controls">
+      <label>Backend <select id="sp-impl"></select></label>
+    </div>
+    <div class="plot" id="fig-speedup" style="height:340px"></div>
+  </figure>
+  <ul class="obs" id="obs-speedup"></ul>
+
+  <h2 id="decode"><span class="n">7</span>Decode and KV cache</h2>
+  <p>Cache traffic per decode step is
+  <code>2 · B · L<sub>kv</sub> · H<sub>kv</sub> · D · s</code> bytes per layer, where
+  <code>B</code> is batch, <code>L<sub>kv</sub></code> the cached length,
+  <code>H<sub>kv</sub></code> the number of key/value heads, <code>D</code> the head
+  dimension and <code>s</code> the bytes per element. Grouped-query attention reduces
+  <code>H<sub>kv</sub></code> and the traffic falls in proportion.</p>
+
+  <figure>
+    <div class="cap"><b>Figure 5.</b> <span id="cap-decode"></span></div>
+    <div class="controls">
+      <label>Batch <select id="dc-batch"><option value="1">1</option><option value="32">32</option></select></label>
+      <label>Metric <select id="dc-metric">
+        <option value="decode_latency">time per decode step (µs)</option>
+        <option value="decode_bw">effective KV bandwidth (GB/s)</option>
+      </select></label>
+    </div>
+    <div class="plot" id="fig-decode" style="height:400px"></div>
+  </figure>
+  <ul class="obs" id="obs-decode"></ul>
+
+  <figure>
+    <div class="cap"><b>Figure 6.</b> Fastest decode backend across batch and KV length.</div>
+    <div class="plot" id="fig-winmap" style="height:340px"></div>
+  </figure>
+  <ul class="obs" id="obs-winmap"></ul>
+
+  <figure>
+    <div class="cap"><b>Figure 7.</b> Multi-head against grouped-query attention: step time and cache traffic.</div>
+    <div class="plot" id="fig-gqa" style="height:360px"></div>
+  </figure>
+  <ul class="obs" id="obs-gqa"></ul>
+
+  <h2 id="attribution"><span class="n">8</span>Attribution</h2>
+  <div class="notice" id="not-collected"></div>
+  <figure>
+    <div class="cap"><b>Figure 8.</b> Arithmetic intensity against achieved throughput, from analytic traffic.</div>
+    <div class="plot" id="fig-roofline" style="height:400px"></div>
+  </figure>
+  <ul class="obs" id="obs-roofline"></ul>
+
+  <h2 id="portability"><span class="n">9</span>Cross-architecture portability</h2>
+  <figure>
+    <div class="cap"><b>Figure 9.</b> Winner change per device pair, before and after requiring the winner to be decisively ahead of second place on both devices.</div>
+    <div class="plot" id="fig-flip" style="height:400px"></div>
+  </figure>
+  <ul class="obs" id="obs-flip"></ul>
+
+  <div class="scroll" id="tbl-pairs"></div>
+
+  <h3>Backend selection</h3>
+  <div class="scroll" id="tbl-selector"></div>
+  <ul class="obs" id="obs-selector"></ul>
+
+  <h2 id="guidance"><span class="n">10</span>Deployment guidance</h2>
+  <div class="scroll" id="tbl-guidance"></div>
+  <ul class="obs">
+    <li>These recommendations hold for the software versions and shapes listed above. Dispatch and rankings should be revalidated after a framework, driver or wheel upgrade.</li>
+    <li>Where the winner is not separated from second place, any of the leading backends is a defensible choice and the recommendation carries no weight.</li>
+  </ul>
+
+  <h2 id="repro"><span class="n">11</span>Reproducibility</h2>
+  <pre id="repro-block"></pre>
+  <footer id="foot"></footer>
+</main>
+</div>
+
+<script id="akp-data" type="application/json">__DATA__</script>
+<script>
+(function(){
+"use strict";
+var D = JSON.parse(document.getElementById("akp-data").textContent);
+
+// Backend colours match dashboard/_data.py so the site and the dashboard
+// cannot disagree about which line is which implementation.
+var C = {
+  "P0-naive":"#9e9e9e","P1-inductor":"#c98a3a","P1-inductor-nofuse":"#e0b877",
+  "P1-inductor-where":"#8c6b3f","P2b-sdpa-mem-eff":"#4c9fd6","P2c-sdpa-flash":"#1f6fb2",
+  "P2d-sdpa-cudnn":"#6fc7c1","P3-triton":"#7e57c2","P4-fa2":"#2e9e5b","P4h-fa3":"#17643a",
+  "D0-naive-kv":"#9e9e9e","D1-inductor":"#c98a3a","D2-sdpa":"#1f6fb2",
+  "D3-fa-kvcache":"#2e9e5b","D4-flashinfer":"#d4547a","D6-fa-prefill-at-1":"#b0a04a"
+};
+var STATUS = {OK:"#1F7A46", UNSUPPORTED:"#8A92A0", OOM_PREDICTED:"#9A6410",
+              OOM:"#A32F26", NUMERICAL_FAIL:"#7e57c2", ERROR:"#A32F26"};
+var GPUS = D.devices.map(function(d){return d.gpu;});
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+function fmt(x,n){return x==null?"—":Number(x).toFixed(n==null?2:n);}
+function pct(x,n){return x==null?"—":(100*x).toFixed(n==null?1:n)+"%";}
+function el(id){return document.getElementById(id);}
+
+function layout(extra){
+  var ink=css("--ink"), ink3=css("--ink-3"), rule=css("--rule-2"), panel=css("--panel");
+  var base={paper_bgcolor:panel, plot_bgcolor:panel,
+    font:{family:'"IBM Plex Sans",system-ui,sans-serif', size:12, color:ink},
+    margin:{l:62,r:16,t:26,b:46}, showlegend:true,
+    legend:{orientation:"h", y:-0.2, font:{size:11}},
+    xaxis:{gridcolor:rule, zeroline:false, linecolor:rule, tickfont:{color:ink3}},
+    yaxis:{gridcolor:rule, zeroline:false, linecolor:rule, tickfont:{color:ink3}},
+    hoverlabel:{font:{family:'"IBM Plex Mono",monospace', size:11}}};
+  return Object.assign(base, extra||{});
+}
+var CFG={displayModeBar:true, displaylogo:false, responsive:true,
+  modeBarButtonsToRemove:["lasso2d","select2d","autoScale2d","toggleSpikelines"],
+  toImageButtonOptions:{format:"png", scale:2}};
+
+/* ---------- header, cards, scope ---------- */
+var sw=D.software||{};
+el("stack").textContent = ["torch "+(sw.torch||"?"), "CUDA "+(sw.cuda||"?"),
+  "triton "+(sw.triton||"?"), "flash-attn "+(sw.flash_attn||"?"),
+  "flashinfer "+(sw.flashinfer||"?")].join("  ·  ");
+
+var H=D.headline;
+var cards=[
+  {v:H.cells.toLocaleString(), k:"matched cells", note:H.ok_rows.toLocaleString()+" measured rows"},
+  {v:pct(D.separation.overall,1), k:"winners separated from #2", note:"bootstrap CI and ≥"+D.separation.practical_threshold+"× gap"},
+  {v:fmt(H.dispatch_mismatch_pct,2)+"%", k:"dispatch mismatches", note:fmt(H.probed_pct,0)+"% of cells probed"},
+  {v:fmt(D.selector.median_regret,3)+"×", k:"selector median regret", note:"p95 "+fmt(D.selector.p95_regret,2)+"× vs oracle"}
+];
+el("cards").innerHTML = cards.map(function(c){
+  return '<div class="card"><div class="v">'+c.v+'</div><div class="k">'+c.k+
+         '</div><div class="note">'+c.note+'</div></div>';}).join("");
+
+var archs=[], seen={};
+D.devices.forEach(function(d){ if(!seen[d.arch]){seen[d.arch]=1; archs.push(d.arch);} });
+el("summary-para").innerHTML =
+  "We compared <b>"+H.cells.toLocaleString()+"</b> dispatch-verified attention configurations across "+
+  GPUS.length+" GPUs spanning "+archs.join(", ")+", covering prefill and single-token KV-cache decode. "+
+  "Restricted to configurations whose fastest backend is decisively ahead of second place on both devices, "+
+  "the decode winner changes on "+decodeFlipRange()+" of matched cells while the prefill winner changes on "+
+  prefillFlipMax()+". A depth-limited selector over shape and device features reached a median regret of "+
+  fmt(D.selector.median_regret,3)+"× against the per-cell oracle.";
+
+function sepPairs(reg){return D.pairs.filter(function(p){return p.regime===reg && p.n_sep>=15 && p.flip_sep!=null;});}
+function decodeFlipRange(){
+  var v=sepPairs("decode").map(function(p){return p.flip_sep;}).sort(function(a,b){return a-b;});
+  return v.length? pct(v[0],0)+" to "+pct(v[v.length-1],0) : "—";
+}
+function prefillFlipMax(){
+  var v=sepPairs("prefill").sort(function(a,b){return b.flip_sep-a.flip_sep;});
+  return v.length? pct(v[0].flip_sep,0)+" between "+v[0].a+" and "+v[0].b : "—";
+}
+
+el("devices").innerHTML = "<table><caption>Devices, with bandwidth measured by a 512&nbsp;MB device-to-device copy rather than taken from the specification.</caption>"+
+ "<thead><tr><th>GPU</th><th>Arch</th><th>CC</th><th class='num'>SMs</th><th class='num'>Memory</th>"+
+ "<th class='num'>L2</th><th class='num'>Measured BW</th><th class='num'>Event overhead</th><th>Driver</th></tr></thead><tbody>"+
+ D.devices.map(function(d){return "<tr><td class='mono'>"+d.gpu+"</td><td>"+d.arch+"</td><td class='mono'>"+d.cc+
+  "</td><td class='num'>"+d.sm+"</td><td class='num'>"+fmt(d.mem_gb,1)+" GB</td><td class='num'>"+
+  (d.l2_mb?fmt(d.l2_mb,0)+" MB":"—")+"</td><td class='num'>"+fmt(d.bw_gbs,0)+" GB/s</td><td class='num'>"+
+  fmt(d.event_us,2)+" µs</td><td class='mono'>"+(d.driver||"—")+"</td></tr>";}).join("")+"</tbody></table>";
+
+var ps=D.prefill_slice, ds=D.decode_slice;
+el("sc-prefill").textContent="N = 256 to 8192, B = 1/4/16, D = 64/128, MHA and GQA, FP16 and BF16, causal, forward and forward+backward";
+el("sc-decode").textContent="KV = 512 to 16384, B = 1/8/32/64, D = 64/128, H_kv = 8 (GQA) and 32 (MHA), FP16 and BF16, eager and CUDA-graph capture";
+el("sc-note").innerHTML="Devices did not all complete the full grid; every comparison below is restricted to configurations both devices actually ran, and the matched count travels with each number.";
+
+/* ---------- Figure 1: coverage ---------- */
+(function(){
+  var by={}, impls={}, statuses={};
+  D.coverage.forEach(function(r){
+    var k=r.implementation; impls[k]=1; statuses[r.status]=1;
+    by[k]=by[k]||{}; by[k][r.status]=(by[k][r.status]||0)+r.n;
+  });
+  var order=Object.keys(impls).sort();
+  var st=Object.keys(statuses).sort(function(a,b){return (a==="OK"?0:1)-(b==="OK"?0:1)||a.localeCompare(b);});
+  var traces=st.map(function(s){
+    return {type:"bar", orientation:"h", name:s, y:order,
+      x:order.map(function(i){return (by[i]||{})[s]||0;}),
+      marker:{color:STATUS[s]||"#8A92A0"}, hovertemplate:"%{y}<br>"+s+": %{x} cells<extra></extra>"};
+  });
+  Plotly.newPlot("fig-coverage", traces, layout({barmode:"stack",
+    xaxis:{title:"attempted cells", gridcolor:css("--rule-2")},
+    yaxis:{automargin:true, tickfont:{family:'"IBM Plex Mono",monospace', size:11}},
+    margin:{l:150,r:16,t:16,b:46}}), CFG);
+  var tot=0, okc=0;
+  D.coverage.forEach(function(r){tot+=r.n; if(r.status==="OK") okc+=r.n;});
+  el("obs-coverage").innerHTML =
+    "<li><b>"+pct(okc/tot,1)+"</b> of "+tot.toLocaleString()+" attempted cells passed both the correctness gate and the dispatch probe.</li>"+
+    "<li>Exclusions are dominated by implementations declining a configuration by design rather than by failures: "+
+    Object.keys(D.status_counts).filter(function(k){return k!=='OK';}).map(function(k){
+      return "<b>"+D.status_counts[k].toLocaleString()+"</b> "+k.toLowerCase().replace(/_/g,' ');}).join(", ")+".</li>";
+})();
+
+/* ---------- Figure 2: dispatch ---------- */
+(function(){
+  var flows=D.dispatch.flows.filter(function(f){return f.n>=20;});
+  var impls=[], obs=[];
+  flows.forEach(function(f){ if(impls.indexOf(f.impl)<0)impls.push(f.impl);
+                             if(obs.indexOf(f.observed)<0)obs.push(f.observed); });
+  impls.sort(); obs.sort();
+  var nodes=impls.concat(obs);
+  Plotly.newPlot("fig-dispatch", [{
+    type:"sankey", orientation:"h",
+    node:{pad:11, thickness:12, line:{width:0}, label:nodes,
+      color:nodes.map(function(n,i){return i<impls.length?(C[n]||"#8A92A0"):
+        (n==="unprobed"?"#8A92A0":css("--accent"));})},
+    link:{source:flows.map(function(f){return impls.indexOf(f.impl);}),
+          target:flows.map(function(f){return impls.length+obs.indexOf(f.observed);}),
+          value:flows.map(function(f){return f.n;}),
+          color:flows.map(function(f){return f.observed==="unprobed"?"rgba(138,146,160,.20)":"rgba(27,79,156,.22)";})}
+  }], layout({margin:{l:8,r:8,t:12,b:12}, showlegend:false,
+    font:{family:'"IBM Plex Mono",monospace', size:10.5, color:css("--ink")}}), CFG);
+  el("obs-dispatch").innerHTML =
+    "<li>Requested and executed paths disagreed in <b>"+fmt(H.dispatch_mismatch_pct,2)+"%</b> of probed cells. "+
+    "The trace could not be captured at all on <b>"+fmt(100-H.probed_pct,0)+"%</b> of cells, shown as <code>unprobed</code>; "+
+    "the miss falls hardest on the fastest single-kernel paths, so the mismatch rate on those cells is unknown rather than zero.</li>"+
+    "<li>TorchInductor's SDPA pattern matcher fired on <b>"+D.dispatch.inductor_counter_fired+"</b> of "+
+    D.dispatch.inductor_rows.toLocaleString()+" compiled rows, so <code>torch.compile</code> did not rewrite the reference "+
+    "implementation into a fused attention call on any device measured.</li>";
+})();
+
+/* ---------- correctness table ---------- */
+(function(){
+  var rows=D.correctness.filter(function(r){return r.n>=10;})
+    .sort(function(a,b){return a.impl.localeCompare(b.impl);});
+  el("tbl-correct").innerHTML="<table><caption>Gate cells per implementation. The criterion is error no worse than twice the reference computed in the same dtype, so the ratio column is the criterion itself.</caption>"+
+    "<thead><tr><th>Implementation</th><th class='num'>Gate cells</th><th class='num'>Max abs err</th>"+
+    "<th class='num'>Max rel err</th><th class='num'>Min cosine</th><th class='num'>× reference</th><th>Result</th></tr></thead><tbody>"+
+    rows.map(function(r){return "<tr><td class='mono'>"+r.impl+"</td><td class='num'>"+r.n+
+      "</td><td class='num'>"+(r.max_abs==null?"—":r.max_abs.toExponential(2))+
+      "</td><td class='num'>"+(r.max_rel==null?"—":r.max_rel.toExponential(2))+
+      "</td><td class='num'>"+fmt(r.min_cos,4)+"</td><td class='num'>"+fmt(r.vs_baseline,2)+
+      "</td><td>"+(r.fail?'<span class="pill bad">'+r.fail+' failed</span>':'<span class="pill ok">pass</span>')+
+      "</td></tr>";}).join("")+"</tbody></table>";
+  var fails=rows.reduce(function(a,r){return a+r.fail;},0);
+  el("obs-correct").innerHTML =
+    "<li>All reported timings come from cells inside the gate; <b>"+(fails||"no")+"</b> gate "+
+    (fails===1?"cell":"cells")+" failed across every implementation and device.</li>"+
+    "<li>The reference is computed in fp32 with chunked online softmax, and the naive path competes as an implementation as well as providing the reference, so a shared orientation or scale error would not be caught by the gate alone. A separate semantics suite covers causal alignment, the GQA head mapping and cache immutability.</li>";
+})();
+
+/* ---------- Figures 3 and 5: per-GPU line panels ---------- */
+function panels(divId, data, ytitle, logy){
+  var gs=GPUS.filter(function(g){return data[g];});
+  var traces=[], seen={};
+  gs.forEach(function(g,i){
+    Object.keys(data[g]).sort().forEach(function(impl){
+      var s=data[g][impl];
+      traces.push({type:"scatter", mode:"lines+markers", name:impl,
+        legendgroup:impl, showlegend:!seen[impl], x:s.x, y:s.y,
+        xaxis:i?"x"+(i+1):"x", yaxis:i?"y"+(i+1):"y",
+        line:{color:C[impl]||"#8A92A0", width:1.8}, marker:{size:4},
+        hovertemplate:g+" · "+impl+"<br>N=%{x}  %{y}<extra></extra>"});
+      seen[impl]=1;
+    });
+  });
+  var lay=layout({margin:{l:60,r:12,t:24,b:56},
+    grid:{rows:1, columns:gs.length, pattern:"independent", xgap:.07}});
+  gs.forEach(function(g,i){
+    var xk=i?"xaxis"+(i+1):"xaxis", yk=i?"yaxis"+(i+1):"yaxis";
+    lay[xk]={type:"log", title:{text:g, font:{size:12}}, gridcolor:css("--rule-2"),
+             linecolor:css("--rule-2"), tickfont:{size:10, color:css("--ink-3")}};
+    lay[yk]={type:logy?"log":"linear", gridcolor:css("--rule-2"), linecolor:css("--rule-2"),
+             tickfont:{size:10, color:css("--ink-3")},
+             title:i===0?{text:ytitle, font:{size:11}}:undefined};
+  });
+  Plotly.newPlot(divId, traces, lay, CFG);
+}
+
+function drawPrefill(){
+  var key=el("pf-metric").value;
+  var t={prefill_latency:"median latency (µs)", prefill_tflops:"achieved TFLOP/s",
+         prefill_memory:"peak allocated (MB)"}[key];
+  panels("fig-prefill", D[key], t, key!=="prefill_tflops");
+}
+el("pf-metric").addEventListener("change", drawPrefill);
+el("cap-prefill").textContent = "Prefill across sequence length at B = "+ps.batch+
+  ", D = "+ps.head_dim+", "+ps.dtype+", "+ps.mode.replace("_","+")+
+  ", causal. Both axes logarithmic for latency and memory.";
+drawPrefill();
+
+(function(){
+  var lat=D.prefill_latency, notes=[];
+  var gs=GPUS.filter(function(g){return lat[g];});
+  gs.forEach(function(g){
+    var best=null, bl=Infinity, maxN=0;
+    Object.keys(lat[g]).forEach(function(i){
+      var s=lat[g][i], j=s.x.length-1;
+      if(s.x[j]>maxN){maxN=s.x[j];}
+    });
+    Object.keys(lat[g]).forEach(function(i){
+      var s=lat[g][i], j=s.x.indexOf(maxN);
+      if(j>=0 && s.y[j]!=null && s.y[j]<bl){bl=s.y[j]; best=i;}
+    });
+    if(best) notes.push(g+": <b>"+best+"</b> at "+fmt(bl,0)+" µs (N="+maxN+")");
+  });
+  el("obs-prefill").innerHTML =
+    "<li>At the longest sequence each device ran, the fastest backend was "+notes.join("; ")+".</li>"+
+    "<li>The implementation choice spans a median factor of <b>"+fmt(D.spread.prefill,1)+
+    "×</b> between the slowest and fastest backend within a single prefill configuration, against <b>"+
+    fmt(D.spread.decode,1)+"×</b> in decode. Prefill is where the choice matters.</li>";
+})();
+
+/* ---------- Figure 4: speedup heatmap ---------- */
+(function(){
+  var impls=[]; D.prefill_speedup.forEach(function(r){if(impls.indexOf(r.impl)<0)impls.push(r.impl);});
+  impls.sort();
+  var sel=el("sp-impl");
+  sel.innerHTML=impls.map(function(i){return '<option value="'+i+'">'+i+'</option>';}).join("");
+  sel.value = impls.indexOf("P4-fa2")>=0 ? "P4-fa2" : impls[0];
+  function draw(){
+    var impl=sel.value, gs=GPUS.slice(), traces=[], lay;
+    var rows=D.prefill_speedup.filter(function(r){return r.impl===impl;});
+    gs=gs.filter(function(g){return rows.some(function(r){return r.gpu===g;});});
+    gs.forEach(function(g,i){
+      var rs=rows.filter(function(r){return r.gpu===g;});
+      var Ns=[], Bs=[];
+      rs.forEach(function(r){ if(Ns.indexOf(r.N)<0)Ns.push(r.N); if(Bs.indexOf(r.B)<0)Bs.push(r.B); });
+      Ns.sort(function(a,b){return a-b;}); Bs.sort(function(a,b){return a-b;});
+      var z=Bs.map(function(b){return Ns.map(function(n){
+        var m=rs.filter(function(r){return r.B===b&&r.N===n;})[0]; return m?m.speedup:null;});});
+      traces.push({type:"heatmap", z:z, x:Ns.map(String), y:Bs.map(String),
+        xaxis:i?"x"+(i+1):"x", yaxis:i?"y"+(i+1):"y",
+        zmid:1, colorscale:[[0,"#A32F26"],[.5,"#F2F3F6"],[1,"#1B4F9C"]],
+        showscale:i===0, colorbar:{title:{text:"×", font:{size:11}}, thickness:10, len:.9},
+        hovertemplate:g+"<br>N=%{x} B=%{y}<br>%{z:.2f}× vs SDPA-flash<extra></extra>"});
+    });
+    lay=layout({margin:{l:44,r:60,t:24,b:52}, showlegend:false,
+      grid:{rows:1, columns:gs.length, pattern:"independent", xgap:.08}});
+    gs.forEach(function(g,i){
+      lay[i?"xaxis"+(i+1):"xaxis"]={title:{text:g, font:{size:12}}, type:"category",
+        tickfont:{size:9.5, color:css("--ink-3")}};
+      lay[i?"yaxis"+(i+1):"yaxis"]={type:"category", tickfont:{size:10, color:css("--ink-3")},
+        title:i===0?{text:"batch", font:{size:11}}:undefined};
+    });
+    Plotly.newPlot("fig-speedup", traces, lay, CFG);
+    var v=rows.map(function(r){return r.speedup;}).filter(function(x){return x!=null;}).sort(function(a,b){return a-b;});
+    var best=rows.filter(function(r){return r.speedup===v[v.length-1];})[0];
+    el("obs-speedup").innerHTML = v.length ?
+      ("<li>Against forced SDPA-flash, <code>"+impl+"</code> ranges from <b>"+fmt(v[0],2)+
+       "×</b> to <b>"+fmt(v[v.length-1],2)+"×</b> across the grid; the gain is concentrated rather than uniform.</li>"+
+       "<li>Its best cell is "+best.gpu+" at N="+best.N+", B="+best.B+": <b>"+fmt(best.speedup,2)+
+       "×</b>, which is "+fmt(best.us,0)+" µs against "+fmt(best.base_us,0)+" µs for the baseline.</li>") : "";
+  }
+  sel.addEventListener("change", draw); draw();
+})();
+
+/* ---------- Figure 5: decode ---------- */
+function drawDecode(){
+  var b=el("dc-batch").value, m=el("dc-metric").value;
+  var key=(m==="decode_latency"?"decode_latency_b":"decode_bw_b")+b;
+  panels("fig-decode", D[key]||{}, m==="decode_latency"?"µs per decode step":"effective GB/s",
+         m==="decode_latency");
+  var lat=D["decode_latency_b"+b]||{}, notes=[];
+  GPUS.filter(function(g){return lat[g];}).forEach(function(g){
+    var dev=D.devices.filter(function(d){return d.gpu===g;})[0];
+    var bw=D["decode_bw_b"+b][g]||{}, best=null, bv=0;
+    Object.keys(bw).forEach(function(i){var s=bw[i], j=s.x.length-1;
+      if(s.y[j]!=null && s.y[j]>bv){bv=s.y[j]; best=i;}});
+    if(best && dev) notes.push(g+": <b>"+best+"</b> reaching "+fmt(bv,0)+" GB/s of "+
+      fmt(dev.bw_gbs,0)+" GB/s measured peak");
+  });
+  el("obs-decode").innerHTML =
+    "<li>At batch "+b+" and the longest KV length, "+notes.join("; ")+".</li>"+
+    "<li>Backend separation contracts as KV length grows: every correct decode kernel moves the same cache bytes, so the regime is bandwidth-bound and the implementations converge.</li>";
+}
+el("dc-batch").addEventListener("change", drawDecode);
+el("dc-metric").addEventListener("change", drawDecode);
+el("cap-decode").textContent = "Decode across KV length at H_kv = "+ds.hkv+", D = "+ds.head_dim+
+  ", "+ds.dtype+", eager launch. Peak bandwidth is measured, not specified.";
+drawDecode();
+
+/* ---------- Figure 6: decode winner map ---------- */
+(function(){
+  var gs=GPUS.filter(function(g){return D.decode_winner_map[g];});
+  var impls=[]; gs.forEach(function(g){D.decode_winner_map[g].forEach(function(r){
+    if(impls.indexOf(r.impl)<0)impls.push(r.impl);});});
+  impls.sort();
+  var traces=[], lay;
+  gs.forEach(function(g,i){
+    var rs=D.decode_winner_map[g], Ns=[], Bs=[];
+    rs.forEach(function(r){ if(Ns.indexOf(r.N)<0)Ns.push(r.N); if(Bs.indexOf(r.y)<0)Bs.push(r.y); });
+    Ns.sort(function(a,b){return a-b;}); Bs.sort(function(a,b){return a-b;});
+    var z=Bs.map(function(b){return Ns.map(function(n){
+      var m=rs.filter(function(r){return r.y===b&&r.N===n;})[0];
+      return m?impls.indexOf(m.impl):null;});});
+    var txt=Bs.map(function(b){return Ns.map(function(n){
+      var m=rs.filter(function(r){return r.y===b&&r.N===n;})[0];
+      return m?m.impl+"<br>"+fmt(m.us,1)+" µs":"";});});
+    traces.push({type:"heatmap", z:z, x:Ns.map(String), y:Bs.map(String), text:txt,
+      xaxis:i?"x"+(i+1):"x", yaxis:i?"y"+(i+1):"y", showscale:false,
+      zmin:0, zmax:Math.max(1,impls.length-1),
+      colorscale:impls.map(function(im,k){return [impls.length<2?0:k/(impls.length-1), C[im]||"#8A92A0"];}),
+      hovertemplate:g+"<br>KV=%{x} B=%{y}<br>%{text}<extra></extra>"});
+  });
+  lay=layout({margin:{l:44,r:12,t:24,b:52}, showlegend:true,
+    grid:{rows:1, columns:gs.length, pattern:"independent", xgap:.08}});
+  impls.forEach(function(im){ traces.push({type:"scatter", mode:"markers", x:[null], y:[null],
+    name:im, marker:{color:C[im]||"#8A92A0", size:9, symbol:"square"}, showlegend:true}); });
+  gs.forEach(function(g,i){
+    lay[i?"xaxis"+(i+1):"xaxis"]={title:{text:g, font:{size:12}}, type:"category",
+      tickfont:{size:9.5, color:css("--ink-3")}};
+    lay[i?"yaxis"+(i+1):"yaxis"]={type:"category", tickfont:{size:10, color:css("--ink-3")},
+      title:i===0?{text:"batch", font:{size:11}}:undefined};
+  });
+  Plotly.newPlot("fig-winmap", traces, lay, CFG);
+  var counts={};
+  gs.forEach(function(g){ counts[g]={}; D.decode_winner_map[g].forEach(function(r){
+    counts[g][r.impl]=(counts[g][r.impl]||0)+1;});});
+  el("obs-winmap").innerHTML =
+    "<li>"+gs.map(function(g){var c=counts[g];
+      var top=Object.keys(c).sort(function(a,b){return c[b]-c[a];})[0];
+      return g+" is led by <b>"+top+"</b> on "+c[top]+" of "+
+        D.decode_winner_map[g].length+" cells";}).join("; ")+".</li>"+
+    "<li>Where the map changes colour between panels the ranking did not transfer, but most decode cells have no separated winner, so a colour change is not by itself evidence of a real difference. The restricted rates in Figure 9 are the ones to read.</li>";
+})();
+
+/* ---------- Figure 7: MHA vs GQA ---------- */
+(function(){
+  var rows=D.mha_vs_gqa;
+  var gs=GPUS.filter(function(g){return rows.some(function(r){return r.gpu===g;});});
+  var Ns=[]; rows.forEach(function(r){if(Ns.indexOf(r.N)<0)Ns.push(r.N);}); Ns.sort(function(a,b){return a-b;});
+  var traces=[];
+  [8,32].forEach(function(h,k){
+    gs.forEach(function(g){
+      var y=Ns.map(function(n){
+        var rs=rows.filter(function(r){return r.gpu===g&&r.hkv===h&&r.N===n;});
+        if(!rs.length)return null;
+        return rs.map(function(r){return r.us;}).sort(function(a,b){return a-b;})[0];});
+      traces.push({type:"scatter", mode:"lines+markers", x:Ns, y:y,
+        name:g+" H_kv="+h, legendgroup:g,
+        line:{color:C[g]||css("--accent"), dash:h===32?"dot":"solid", width:1.8},
+        marker:{size:4, symbol:h===32?"circle-open":"circle"},
+        xaxis:"x", yaxis:"y",
+        hovertemplate:g+" H_kv="+h+"<br>KV=%{x}: %{y:.1f} µs<extra></extra>"});
+    });
+  });
+  var pal=["#1B4F9C","#2e9e5b","#c98a3a","#7e57c2","#d4547a"];
+  traces.forEach(function(t,i){ t.line.color = pal[Math.floor(i%gs.length)]; });
+  Plotly.newPlot("fig-gqa", traces, layout({
+    xaxis:{type:"log", title:{text:"KV length", font:{size:11}}, gridcolor:css("--rule-2")},
+    yaxis:{type:"log", title:{text:"fastest backend, µs per step", font:{size:11}}, gridcolor:css("--rule-2")},
+    margin:{l:62,r:16,t:20,b:52}}), CFG);
+  var g0=gs[0];
+  function at(h,n){var rs=rows.filter(function(r){return r.gpu===g0&&r.hkv===h&&r.N===n;});
+    return rs.length? rs.map(function(r){return r.us;}).sort(function(a,b){return a-b;})[0] : null;}
+  function kv(h,n){var rs=rows.filter(function(r){return r.gpu===g0&&r.hkv===h&&r.N===n;});
+    return rs.length? rs[0].kv_mb : null;}
+  var nMax=Ns[Ns.length-1], a=at(32,nMax), b=at(8,nMax), ka=kv(32,nMax), kb=kv(8,nMax);
+  el("obs-gqa").innerHTML =
+    (a&&b? "<li>On "+g0+" at KV="+nMax+", reducing key/value heads from 32 to 8 cuts cache traffic from <b>"+
+      fmt(ka,0)+" MB</b> to <b>"+fmt(kb,0)+" MB</b> per step and step time from <b>"+fmt(a,0)+
+      " µs</b> to <b>"+fmt(b,0)+" µs</b>, a factor of "+fmt(a/b,2)+" against a traffic factor of "+fmt(ka/kb,1)+".</li>":"")+
+    "<li>The latency gain is smaller than the traffic reduction because the query-side work, the kernel launch and the fixed per-step overhead do not shrink with the number of key/value heads.</li>";
+})();
+
+/* ---------- Figure 8: roofline ---------- */
+(function(){
+  el("not-collected").innerHTML="<b>Not collected.</b> "+D.not_collected.join(" ");
+  if(!D.roofline){ el("fig-roofline").style.display="none"; return; }
+  var traces=[];
+  ["prefill","decode"].forEach(function(reg,i){
+    GPUS.forEach(function(g){
+      var rs=D.roofline.filter(function(r){return r.gpu===g&&r.regime===reg;});
+      if(!rs.length)return;
+      traces.push({type:"scatter", mode:"markers", name:g+" "+reg,
+        x:rs.map(function(r){return r.ai;}), y:rs.map(function(r){return r.tflops;}),
+        text:rs.map(function(r){return r.impl;}),
+        marker:{size:7, symbol:reg==="prefill"?"circle":"diamond",
+                color:["#1B4F9C","#2e9e5b","#c98a3a","#7e57c2","#d4547a"][GPUS.indexOf(g)%5],
+                opacity:.85, line:{width:0}},
+        hovertemplate:"%{text}<br>"+g+" "+reg+"<br>AI %{x:.0f} FLOP/B · %{y:.1f} TFLOP/s<extra></extra>"});
+    });
+  });
+  Plotly.newPlot("fig-roofline", traces, layout({
+    xaxis:{type:"log", title:{text:"arithmetic intensity (FLOP per byte, modelled)", font:{size:11}}, gridcolor:css("--rule-2")},
+    yaxis:{type:"log", title:{text:"achieved TFLOP/s", font:{size:11}}, gridcolor:css("--rule-2")},
+    margin:{l:62,r:16,t:20,b:52}}), CFG);
+  el("obs-roofline").innerHTML =
+    "<li>Prefill and decode occupy separate regions of the intensity axis by two to three orders of magnitude, which is why a single throughput axis across both regimes is misleading and they are reported apart throughout.</li>"+
+    "<li>Traffic here is the algorithmic minimum computed from the shape, not measured DRAM traffic, so the placement is a model of where each regime sits rather than a counter-based attribution. No compute roof is drawn because no peak-FLOP figure was measured on these devices.</li>";
+})();
+
+/* ---------- Figure 9: flip rates ---------- */
+(function(){
+  var regs=["prefill","decode"], traces=[];
+  regs.forEach(function(reg,i){
+    var ps=D.pairs.filter(function(p){return p.regime===reg && p.flip_sep!=null && p.n_sep>=5;})
+      .sort(function(a,b){return b.flip_sep-a.flip_sep;});
+    var lbl=ps.map(function(p){return p.a+" / "+p.b;});
+    traces.push({type:"bar", name:reg+" (all cells)", x:lbl,
+      y:ps.map(function(p){return 100*p.flip;}), xaxis:i?"x2":"x", yaxis:i?"y2":"y",
+      marker:{color:css("--neutral"), opacity:.45}, showlegend:i===0,
+      hovertemplate:"%{x}<br>all: %{y:.0f}%<extra></extra>"});
+    traces.push({type:"bar", name:reg+" (separated only)", x:lbl,
+      y:ps.map(function(p){return 100*p.flip_sep;}), xaxis:i?"x2":"x", yaxis:i?"y2":"y",
+      marker:{color:css("--accent")}, showlegend:i===0,
+      text:ps.map(function(p){return "n="+p.n_sep;}), textposition:"outside",
+      textfont:{size:9, color:css("--ink-3")},
+      hovertemplate:"%{x}<br>separated: %{y:.0f}% (%{text})<extra></extra>"});
+  });
+  var lay=layout({barmode:"group", margin:{l:52,r:12,t:26,b:86},
+    grid:{rows:1, columns:2, pattern:"independent", xgap:.12},
+    legend:{orientation:"h", y:-0.38, font:{size:11}}});
+  lay.xaxis={title:{text:"prefill", font:{size:12}}, tickfont:{size:9.5, color:css("--ink-3")}, tickangle:-35};
+  lay.xaxis2={title:{text:"decode", font:{size:12}}, tickfont:{size:9.5, color:css("--ink-3")}, tickangle:-35};
+  lay.yaxis={title:{text:"winner changes (%)", font:{size:11}}, range:[0,105], gridcolor:css("--rule-2")};
+  lay.yaxis2={range:[0,105], gridcolor:css("--rule-2")};
+  Plotly.newPlot("fig-flip", traces, lay, CFG);
+
+  var dp=sepPairs("decode"), pp=sepPairs("prefill");
+  var dmax=dp.length?Math.max.apply(null,dp.map(function(p){return p.flip_sep;})):null;
+  var pmax=pp.length?Math.max.apply(null,pp.map(function(p){return p.flip_sep;})):null;
+  el("obs-flip").innerHTML =
+    "<li>Only <b>"+pct(D.separation.overall,1)+"</b> of cells have a winner the bootstrap and the 10&nbsp;% threshold both separate from second place, and the median winner leads by "+
+    fmt(100*(D.separation.by_regime.prefill.median_ratio-1),0)+"&nbsp;% in prefill and "+
+    fmt(100*(D.separation.by_regime.decode.median_ratio-1),0)+"&nbsp;% in decode. The unrestricted rate therefore counts a large number of ties as portability failures.</li>"+
+    "<li>Restricted to decisively won configurations the two regimes separate: decode falls to at most <b>"+pct(dmax,0)+
+    "</b> while prefill stays as high as <b>"+pct(pmax,0)+"</b>. Decode rankings transfer; prefill rankings do not.</li>";
+
+  var rows=D.pairs.filter(function(p){return p.flip_sep!=null;})
+    .sort(function(a,b){return a.regime.localeCompare(b.regime)||b.flip_sep-a.flip_sep;});
+  el("tbl-pairs").innerHTML="<table><caption>Every device pair with at least five matched cells. The restricted column keeps only configurations whose winner is decisively ahead of second place on both devices.</caption>"+
+    "<thead><tr><th>Regime</th><th>Pair</th><th class='num'>Matched</th><th class='num'>Winner changes</th>"+
+    "<th class='num'>Decisive cells</th><th class='num'>Restricted</th><th class='num'>Spearman</th></tr></thead><tbody>"+
+    rows.map(function(p){return "<tr><td>"+p.regime+"</td><td class='mono'>"+p.a+" / "+p.b+
+      "</td><td class='num'>"+p.n+"</td><td class='num'>"+pct(p.flip,0)+"</td><td class='num'>"+p.n_sep+
+      "</td><td class='num'>"+pct(p.flip_sep,0)+"</td><td class='num'>"+fmt(p.spearman,3)+
+      "</td></tr>";}).join("")+"</tbody></table>";
+})();
+
+/* ---------- selector ---------- */
+(function(){
+  var vf=D.selector.vs_fixed||{};
+  var keys=Object.keys(vf).sort();
+  el("tbl-selector").innerHTML="<table><caption>Fixed-backend policies against the selector and the per-cell oracle, on held-out configurations. Regret is the ratio of the selected backend's latency to the oracle's.</caption>"+
+    "<thead><tr><th>Policy</th><th class='num'>Median speedup vs policy</th><th class='num'>p95</th><th class='num'>Coverage</th></tr></thead><tbody>"+
+    keys.map(function(k){return "<tr><td class='mono'>always "+k+"</td><td class='num'>"+fmt(vf[k].median,3)+
+      "×</td><td class='num'>"+fmt(vf[k].p95,2)+"×</td><td class='num'>"+pct(vf[k].coverage,0)+
+      "</td></tr>";}).join("")+
+    "<tr><td class='mono'>selector</td><td class='num'>"+fmt(D.selector.median_regret,3)+
+    "× regret</td><td class='num'>"+fmt(D.selector.p95_regret,2)+"×</td><td class='num'>—</td></tr>"+
+    "<tr><td class='mono'>oracle</td><td class='num'>1.000×</td><td class='num'>1.00×</td><td class='num'>100%</td></tr>"+
+    "</tbody></table>";
+  el("obs-selector").innerHTML =
+    "<li>The selector's median regret is <b>"+fmt(D.selector.median_regret,3)+"×</b> with a p95 of <b>"+
+    fmt(D.selector.p95_regret,2)+"×</b> over "+D.selector.n+" held-out configurations. Top-1 accuracy is "+
+    pct(D.selector.accuracy,0)+", but that measures label agreement on near-ties rather than cost, which is why regret is reported first.</li>"+
+    "<li>No fixed policy is uniformly safe: each one's p95 shows a configuration where it is materially behind the best available backend.</li>";
+})();
+
+/* ---------- deployment guidance ---------- */
+(function(){
+  function lead(reg,g,filter){
+    var src = reg==="decode" ? (D.decode_winner_map[g]||[]) : null;
+    if(reg==="decode"){
+      var c={}; src.filter(filter||function(){return true;}).forEach(function(r){c[r.impl]=(c[r.impl]||0)+1;});
+      var k=Object.keys(c).sort(function(a,b){return c[b]-c[a];})[0];
+      return k? k+" ("+c[k]+" cells)" : "—";
+    }
+    var w=(D.winners.prefill||{})[g]||{};
+    var k=Object.keys(w).sort(function(a,b){return w[b]-w[a];})[0];
+    return k? k+" ("+w[k]+" cells)" : "—";
+  }
+  var rows=[];
+  GPUS.forEach(function(g){
+    rows.push({wl:"Prefill", g:g, b:lead("prefill",g),
+      conf:(D.pairs.filter(function(p){return p.regime==="prefill"&&(p.a===g||p.b===g);})[0]||{}).n_sep});
+  });
+  GPUS.filter(function(g){return D.decode_winner_map[g];}).forEach(function(g){
+    rows.push({wl:"Decode, batch 1", g:g, b:lead("decode",g,function(r){return r.y===1;})});
+    rows.push({wl:"Decode, batched", g:g, b:lead("decode",g,function(r){return r.y>=32;})});
+  });
+  el("tbl-guidance").innerHTML="<table><caption>Most frequent fastest backend per device and regime, over the configurations measured here.</caption>"+
+    "<thead><tr><th>Workload</th><th>Device</th><th>Leading backend</th><th>Caveat</th></tr></thead><tbody>"+
+    rows.map(function(r){
+      var cav = r.wl.indexOf("Prefill")===0
+        ? "Ranking does not transfer to another architecture; revalidate."
+        : "Most cells have no separated winner; any leading backend is defensible.";
+      return "<tr><td>"+r.wl+"</td><td class='mono'>"+r.g+"</td><td class='mono'>"+r.b+
+             "</td><td>"+cav+"</td></tr>";}).join("")+"</tbody></table>";
+})();
+
+/* ---------- reproducibility ---------- */
+(function(){
+  var d0=D.devices[0]||{};
+  el("repro-block").textContent =
+    "git commit      "+(d0.sha||"—")+"\n"+
+    "software        torch "+(sw.torch||"?")+"  CUDA "+(sw.cuda||"?")+"  triton "+(sw.triton||"?")+
+      "  flash-attn "+(sw.flash_attn||"?")+"  flashinfer "+(sw.flashinfer||"?")+"\n"+
+    "devices         "+D.devices.map(function(d){return d.gpu+" ("+d.cc+")";}).join(", ")+"\n"+
+    "rows            "+H.rows.toLocaleString()+" attempted, "+H.ok_rows.toLocaleString()+" measured\n\n"+
+    "# rebuild every number and figure on this page from the raw shards\n"+
+    "python -m akp.analysis results_live/raw --out results/processed\n"+
+    "python -m akp.figures  results/processed\n"+
+    "python -m akp.webdata  results/processed results/figures/web.json";
+  el("foot").innerHTML = "Measurements taken at one pinned software snapshot. Every claim is scoped to the "+
+    "(kernel, GPU, regime, software snapshot) tuple; a different wheel is a different experiment. "+
+    "Reference implementations are attributed in section 4.";
+})();
+
+/* ---------- TOC scroll spy ---------- */
+(function(){
+  var links=[].slice.call(document.querySelectorAll("nav.toc a"));
+  var secs=links.map(function(a){return document.getElementById(a.getAttribute("href").slice(1));});
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(!e.isIntersecting)return;
+      links.forEach(function(a){a.classList.remove("on");});
+      var i=secs.indexOf(e.target);
+      if(i>=0) links[i].classList.add("on");
+    });
+  },{rootMargin:"-10% 0px -80% 0px"});
+  secs.forEach(function(s){ if(s) io.observe(s); });
+})();
+
+/* redraw on theme change so plot grounds follow the tokens */
+if(window.matchMedia){
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function(){
+    location.reload();
+  });
+}
+})();
+</script>

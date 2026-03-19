@@ -1,0 +1,19 @@
+---
+interface Props {
+	items: { value: string; label: string; detail?: string }[];
+}
+
+const { items } = Astro.props;
+---
+
+<div class="result-strip">
+	{
+		items.map((it) => (
+			<div>
+				<div class="value">{it.value}</div>
+				<div class="label">{it.label}</div>
+				{it.detail && <div class="detail">{it.detail}</div>}
+			</div>
+		))
+	}
+</div>

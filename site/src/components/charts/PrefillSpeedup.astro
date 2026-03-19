@@ -1,0 +1,303 @@
+---
+// Faceted prefill speedup heatmap: one panel per GPU, x = sequence length,
+// y = batch, colour = speedup over the forced SDPA-flash baseline, diverging
+// about 1.0. A select picks the implementation. Every value is read from
+// public/data/web.json at runtime; nothing numeric is written into this file.
+interface Props {
+	id?: string;
+}
+const { id = 'fig-prefill-speedup' } = Astro.props;
+---
+
+<figure class="figure-wide prefill-speedup" id={id} data-prefill-speedup>
+	<div class="chart-head">
+		<div class="chart-title">
+			Prefill speedup over forced SDPA-flash, by batch and sequence length
+		</div>
+		<label class="chart-control">
+			<span>Implementation</span>
+			<select data-impl></select>
+		</label>
+	</div>
+	<div class="chart-body" data-plot></div>
+	<figcaption data-caption></figcaption>
+</figure>
+
+<script>
+	import * as Plot from '@observablehq/plot';
+
+	// Fixed backend identity, the same seven families as every other chart on
+	// the page. Used here only to order and label the select, since the fill
+	// carries speedup rather than backend.
+	const FAMILY: [RegExp, string][] = [
+		[/^P1-inductor|^D1-inductor/, 'TorchInductor'],
+		[/^P2[bcd]?-sdpa|^D2-sdpa/, 'SDPA'],
+		[/^P3-triton/, 'Triton'],
+		[/^P4h-fa3/, 'FlashAttention-3'],
+		[/^P4-fa2|^D3-fa-kvcache|^D6-fa-prefill-at-1/, 'FlashAttention-2'],
+		[/^D4-flashinfer/, 'FlashInfer'],
+		[/./, 'PyTorch reference'],
+	];
+	const familyIndex = (impl: string) => FAMILY.findIndex(([re]) => re.test(impl));
+	const familyOf = (impl: string) => FAMILY[familyIndex(impl)][1];
+
+	// ponytail: the ramp is clamped at 4x either way so the band around 1.0 stays
+	// readable; the naive kernel runs up to 30x slower and would otherwise flatten
+	// every other cell. The exact ratio is printed in the cell and in the hover,
+	// so the clamp costs no information. Raise CLAMP if it ever hides a cell.
+	const CLAMP = 4;
+
+	type Row = {
+		gpu: string;
+		B: number;
+		N: number;
+		impl: string;
+		speedup: number;
+		us: number;
+		base_us: number;
+	};
+
+	const isDark = () => {
+		const t = document.documentElement.dataset.theme;
+		return t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+	};
+
+	const token = (el: Element, name: string) => getComputedStyle(el).getPropertyValue(name).trim();
+
+	const fmtN = (n: number) => (n >= 1024 ? `${n / 1024}k` : String(n));
+	const fmtRatio = (v: number) => (v < 10 ? v.toFixed(2) : v.toFixed(1));
+	// Latencies run from 31 us to 227 ms, so significant digits beat fixed decimals.
+	const fmtUs = (v: number) => v.toLocaleString('en-US', { maximumSignificantDigits: 4 });
+
+	function render(root: HTMLElement, fig: HTMLElement, web: any, impl: string) {
+		const all: Row[] = web.prefill_speedup;
+		const rows = all.filter((r) => r.impl === impl);
+
+		// Panels stay in compute-capability order, and every GPU that appears
+		// anywhere in the slice keeps its panel, so an implementation that ran on
+		// one part shows four empty panels instead of silently shrinking.
+		const gpus: string[] = web.devices
+			.filter((d: any) => all.some((r) => r.gpu === d.gpu))
+			.sort(
+				(a: any, b: any) =>
+					Number(String(a.cc).replace(/\D/g, '')) - Number(String(b.cc).replace(/\D/g, '')) ||
+					a.gpu.localeCompare(b.gpu)
+			)
+			.map((d: any) => d.gpu);
+		const cc: Record<string, string> = Object.fromEntries(
+			web.devices.map((d: any) => [d.gpu, d.cc])
+		);
+		const panelOf = (gpu: string) => `${gpu} ${cc[gpu]}`;
+
+		const seqs = [...new Set(all.map((r) => r.N))].sort((a, b) => a - b);
+		const batches = [...new Set(all.map((r) => r.B))].sort((a, b) => b - a); // small batch at the bottom
+
+		const dark = isDark();
+		const slower = token(fig, '--failure');
+		const faster = token(fig, '--success');
+		const mid = token(fig, '--surface');
+		// Ink for the number printed in a cell: the saturated ends of the ramp
+		// take contrasting ink, the pale middle takes the body colour.
+		const deepInk = dark ? '#101214' : '#ffffff';
+		const midInk = token(fig, '--text-primary');
+		const inkFor = (s: number) =>
+			Math.abs(Math.log(s)) / Math.log(CLAMP) > 0.45 ? deepInk : midInk;
+
+		const ticks: number[] = [];
+		for (let e = -Math.log2(CLAMP); e <= Math.log2(CLAMP); e++) ticks.push(2 ** e);
+
+		const narrow = root.clientWidth < 760;
+		const width = Math.max(320, root.clientWidth || 900);
+		const cell = 34;
+		const facet = narrow ? { fy: (d: Row) => panelOf(d.gpu) } : { fx: (d: Row) => panelOf(d.gpu) };
+		const panels = gpus.map(panelOf);
+
+		const plot = Plot.plot({
+			width,
+			height: (narrow ? panels.length : 1) * batches.length * cell + (narrow ? 72 : 76),
+			marginLeft: 52,
+			marginBottom: 44,
+			marginTop: 26,
+			marginRight: narrow ? 78 : 10,
+			style: {
+				background: 'transparent',
+				color: 'var(--text-secondary)',
+				fontFamily: 'var(--font-mono)',
+				fontSize: '11px',
+				fontVariantNumeric: 'tabular-nums',
+			},
+			x: { domain: seqs, label: 'sequence length N', tickFormat: fmtN },
+			y: { domain: batches, label: 'batch B' },
+			fx: narrow ? undefined : { domain: panels, label: null },
+			fy: narrow ? { domain: panels, label: null } : undefined,
+			color: {
+				type: 'diverging-log',
+				pivot: 1,
+				domain: [1 / CLAMP, CLAMP],
+				clamp: true,
+				range: [slower, mid, faster],
+				legend: true,
+				ticks,
+				tickFormat: (v: number) => `${v < 1 ? fmtRatio(v) : String(v)}x`,
+				label: `speedup over forced SDPA-flash (colour clamped at ${CLAMP}x, exact ratio printed)`,
+			},
+			marks: [
+				Plot.frame({ stroke: 'var(--border)', strokeWidth: 0.6 }),
+				Plot.cell(rows, {
+					...facet,
+					x: 'N',
+					y: 'B',
+					fill: 'speedup',
+					inset: 0.5,
+					title: (d: Row) =>
+						`${d.impl} on ${panelOf(d.gpu)}\n` +
+						`B=${d.B}, N=${d.N}\n` +
+						`${fmtRatio(d.speedup)}x the forced SDPA-flash baseline\n` +
+						`${fmtUs(d.us)} us against ${fmtUs(d.base_us)} us baseline`,
+					tip: true,
+				}),
+				Plot.text(rows, {
+					...facet,
+					x: 'N',
+					y: 'B',
+					text: (d: Row) => fmtRatio(d.speedup),
+					fill: (d: Row) => inkFor(d.speedup),
+					fontSize: 10,
+					pointerEvents: 'none',
+				}),
+			],
+		});
+
+		root.replaceChildren(plot);
+		return rows.length;
+	}
+
+	let web: Promise<any> | null = null;
+	const load = () =>
+		(web ??= fetch(`${import.meta.env.BASE_URL.replace(/\/?$/, '/')}data/web.json`).then((r) =>
+			r.json()
+		));
+
+	function mount(fig: HTMLElement) {
+		const plotEl = fig.querySelector<HTMLElement>('[data-plot]')!;
+		const select = fig.querySelector<HTMLSelectElement>('[data-impl]')!;
+		const caption = fig.querySelector<HTMLElement>('[data-caption]')!;
+
+		load().then((data: any) => {
+			const all: Row[] = data.prefill_speedup;
+			const impls = [...new Set(all.map((r) => r.impl))].sort(
+				(a, b) => familyIndex(a) - familyIndex(b) || a.localeCompare(b)
+			);
+			select.replaceChildren(
+				...impls.map((impl) => {
+					const opt = document.createElement('option');
+					opt.value = impl;
+					opt.textContent = `${impl} (${familyOf(impl)})`;
+					return opt;
+				})
+			);
+
+			const s = data.prefill_slice;
+			const prefill = data.separation.by_regime.prefill;
+			const threshold = ((data.separation.practical_threshold - 1) * 100).toFixed(0);
+
+			const draw = () => {
+				const n = render(plotEl, fig, data, select.value);
+				caption.textContent =
+					`Each cell is the median latency of ${select.value} divided by the median latency of the ` +
+					`forced SDPA-flash baseline at the same GPU, batch and sequence length; above 1.0 is faster ` +
+					`than that baseline. ${n} cells are drawn for this implementation, out of ${all.length} in ` +
+					`the prefill slice. Hover a cell for the ratio and both absolute medians, since a ratio on ` +
+					`its own does not say whether the gap is 5 us or 5 ms. Slice: head dim ${s.head_dim}, ` +
+					`${s.dtype}, ${s.mode} pass, prefill only, torch ${data.software.torch} on CUDA ` +
+					`${data.software.cuda}. A blank cell is a shape with no timed pair, not a tie; the coverage ` +
+					`table keeps unsupported, predicted-OOM and OOM apart rather than merging them. Across the ` +
+					`prefill grid only ${(100 * prefill.separated).toFixed(1)}% of ${prefill.n} cells have a ` +
+					`winner that the bootstrap CI and the ${threshold}% practical threshold both separate from ` +
+					`second place, so a cell within about ${threshold}% of 1.0 is not a measured difference.`;
+			};
+			draw();
+			select.addEventListener('change', draw);
+
+			// Fill colours are read from the tokens as literals, so a theme flip has
+			// to redraw. Plot's own var() styling follows the theme without help.
+			matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+
+			let w = plotEl.clientWidth;
+			new ResizeObserver(() => {
+				if (Math.abs(plotEl.clientWidth - w) > 8) {
+					w = plotEl.clientWidth;
+					draw();
+				}
+			}).observe(plotEl);
+		});
+	}
+
+	// The figure fetches and draws itself the first time it scrolls into view, so
+	// no hydration directive is needed on the tag.
+	const seen = new IntersectionObserver((entries) => {
+		for (const e of entries) {
+			if (!e.isIntersecting) continue;
+			seen.unobserve(e.target);
+			mount(e.target as HTMLElement);
+		}
+	});
+	for (const fig of document.querySelectorAll<HTMLElement>('[data-prefill-speedup]')) {
+		if (fig.dataset.mounted) continue;
+		fig.dataset.mounted = '1';
+		seen.observe(fig);
+	}
+</script>
+
+<style>
+	.prefill-speedup {
+		margin: 40px 0;
+	}
+	.chart-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 24px;
+		border-bottom: 1px solid var(--border);
+		padding-bottom: 8px;
+	}
+	.chart-title {
+		font-family: var(--font-heading);
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+	.chart-control {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		font-size: 14px;
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+	.chart-control select {
+		font-family: var(--font-mono);
+		font-size: 13px;
+		color: var(--text-primary);
+		background: var(--background);
+		border: 1px solid var(--border);
+		padding: 3px 6px;
+	}
+	.chart-body {
+		margin-top: 12px;
+		overflow-x: auto;
+	}
+	figcaption {
+		margin-top: 12px;
+		font-size: 14px;
+		line-height: 1.55;
+		color: var(--text-secondary);
+		max-width: 78ch;
+	}
+	@media (max-width: 760px) {
+		.chart-head {
+			flex-direction: column;
+			gap: 8px;
+		}
+	}
+</style>

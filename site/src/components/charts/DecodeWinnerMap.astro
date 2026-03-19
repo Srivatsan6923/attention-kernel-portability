@@ -1,0 +1,176 @@
+---
+/* Faceted categorical heatmap of the decode winner per (batch, KV length) cell,
+   one panel per GPU. Every number is derived from public/data/web.json. */
+import web from '../../../public/data/web.json';
+import ResearchFigure from '../ResearchFigure.astro';
+import Observation from '../Observation.astro';
+
+interface Props {
+	number?: number;
+	id?: string;
+}
+const { number = 1, id = 'fig-decode-winner-map' } = Astro.props;
+
+// Fixed backend palette. fa3 and flashinfer are tested before the bare fa rule.
+const implColour = (impl: string): string =>
+	/naive/.test(impl) ? '#9e9e9e'
+	: /inductor/.test(impl) ? '#7e57c2'
+	: /sdpa/.test(impl) ? '#1769aa'
+	: /triton/.test(impl) ? '#2a9d8f'
+	: /fa3/.test(impl) ? '#c4562a'
+	: /flashinfer/.test(impl) ? '#2e9e5b'
+	: /fa/.test(impl) ? '#e08c3a'
+	: '#9e9e9e';
+
+const map = web.decode_winner_map as Record<string, { N: number; y: number; impl: string; us: number }[]>;
+const sm = Object.fromEntries(web.devices.map((d) => [d.gpu, d.sm]));
+const gpus = web.devices.map((d) => d.gpu).filter((g) => g in map);
+const rows = gpus.flatMap((gpu) => map[gpu].map((r) => ({ ...r, panel: `${gpu} ${sm[gpu]}` })));
+
+const impls = [...new Set(rows.map((r) => r.impl))].sort();
+const kv = [...new Set(rows.map((r) => r.N))].sort((a, b) => a - b);
+const batches = [...new Set(rows.map((r) => r.y))].sort((a, b) => b - a); // largest batch on top
+
+const payload = {
+	rows,
+	panels: gpus.map((g) => `${g} ${sm[g]}`),
+	impls,
+	colours: impls.map(implColour),
+	kv,
+	batches,
+};
+
+const dec = web.separation.by_regime.decode;
+const pct1 = (x: number) => (100 * x).toFixed(1);
+const lead = ((dec.median_ratio - 1) * 100).toFixed(1);
+const threshold = ((web.separation.practical_threshold - 1) * 100).toFixed(0);
+const s = web.decode_slice;
+---
+
+<ResearchFigure
+	id={id}
+	number={number}
+	title={`Fastest decode implementation per batch and KV length, ${gpus.length} GPUs, hkv=${s.hkv}, head_dim=${s.head_dim}, ${s.dtype}`}
+	dataHref="/data/web.json"
+>
+	<div class="decode-winner-map">
+		<script
+			type="application/json"
+			class="dwm-data"
+			set:html={JSON.stringify(payload).replace(/</g, '\u003c')}
+		/>
+		<div class="dwm-legend"></div>
+		<div class="dwm-chart"></div>
+	</div>
+
+	<Observation slot="observations">
+		<li>
+			Each cell is the implementation with the lowest median latency at that batch and KV length;
+			{rows.length} cells over {gpus.length} GPUs are shown, and {impls.length} implementations ({impls.join(', ')})
+			take at least one cell. Colour is the fastest median only. Over the full decode grid of {dec.n} cells,
+			{pct1(dec.separated)}% have a winner that both the bootstrap CI and the {threshold}% practical
+			threshold separate from second place, and the median winner leads by {lead}%. Most cells here have
+			no separated winner, so a colour change between neighbouring cells is not by itself a real difference.
+		</li>
+		<li>
+			Comparing panels mixes hardware with software snapshot. The A10 and A100 decode rows were collected
+			at a different commit and driver than the H100 and L40 rows, so a panel-to-panel change in the winner
+			is confounded and cannot be read as an architecture effect on its own.
+		</li>
+		<li>
+			Hover a cell for the implementation and its median microseconds. The latency is carried with the
+			winner because a winner label without its absolute cost says nothing about the size of the gap.
+			Every claim here is scoped to this slice: decode, hkv={s.hkv}, head_dim={s.head_dim}, {s.dtype},
+			on these GPUs at this software snapshot.
+		</li>
+	</Observation>
+</ResearchFigure>
+
+<style>
+	.decode-winner-map {
+		font-family: var(--font-body);
+	}
+	.decode-winner-map svg {
+		font-variant-numeric: tabular-nums;
+		overflow: visible;
+	}
+	.dwm-legend {
+		margin-bottom: 8px;
+	}
+	.dwm-legend svg {
+		display: block;
+	}
+	.dwm-chart {
+		overflow-x: auto;
+	}
+</style>
+
+<script>
+	import * as Plot from '@observablehq/plot';
+
+	const css = (name: string) =>
+		getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+	const fmtKV = (n: number) => (n >= 1024 ? `${n / 1024}K` : `${n}`);
+
+	function draw(root: HTMLElement) {
+		const data = JSON.parse(root.querySelector('.dwm-data')!.textContent!);
+		const chart = root.querySelector('.dwm-chart') as HTMLElement;
+		const legendBox = root.querySelector('.dwm-legend') as HTMLElement;
+		const text = css('--text-primary');
+		const muted = css('--text-secondary');
+		const border = css('--border');
+		const bg = css('--background');
+
+		const width = Math.max(560, Math.round(chart.clientWidth || 900));
+		const colour = { domain: data.impls, range: data.colours };
+
+		const plot = Plot.plot({
+			width,
+			height: 250,
+			marginTop: 30,
+			marginRight: 10,
+			marginBottom: 46,
+			marginLeft: 54,
+			style: { fontFamily: css('--font-mono') || 'monospace', fontSize: '12px', color: muted, background: 'transparent' },
+			x: { type: 'band', domain: data.kv, label: 'KV length (tokens)', tickFormat: fmtKV, tickSize: 0 },
+			y: { type: 'band', domain: data.batches, label: 'batch', tickSize: 0 },
+			fx: { domain: data.panels, label: null },
+			color: colour,
+			marks: [
+				Plot.cell(data.rows, {
+					x: 'N',
+					y: 'y',
+					fx: 'panel',
+					fill: 'impl',
+					inset: 0.75,
+					stroke: bg,
+					strokeWidth: 0.75,
+					title: (d: any) => `${d.impl}\n${d.us.toFixed(1)} µs median\nbatch ${d.y}, KV ${d.N}`,
+				}),
+				Plot.frame({ stroke: border, strokeWidth: 0.75 }),
+			],
+		});
+
+		chart.replaceChildren(plot);
+		legendBox.replaceChildren(
+			Plot.legend({
+				color: colour,
+				swatchSize: 11,
+				style: { fontFamily: css('--font-mono') || 'monospace', fontSize: '13px', color: text, background: 'transparent' },
+			}),
+		);
+	}
+
+	// ponytail: redraw only when the integer width actually changes.
+	for (const root of document.querySelectorAll<HTMLElement>('.decode-winner-map')) {
+		let last = 0;
+		new ResizeObserver(() => {
+			const w = Math.round(root.clientWidth);
+			if (w && w !== last) {
+				last = w;
+				draw(root);
+			}
+		}).observe(root);
+	}
+</script>

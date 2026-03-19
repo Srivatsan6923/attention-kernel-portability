@@ -1,0 +1,12 @@
+---
+import { NAV, SITE_AUTHOR } from '../consts';
+---
+
+<header class="site-header">
+	<nav>
+		<a class="brand" href="/">{SITE_AUTHOR}</a>
+		<div class="links">
+			{NAV.map((l) => <a href={l.href}>{l.label}</a>)}
+		</div>
+	</nav>
+</header>

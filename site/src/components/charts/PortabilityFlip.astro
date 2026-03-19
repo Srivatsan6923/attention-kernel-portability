@@ -1,0 +1,251 @@
+---
+// Figure: winner flip rate between GPU pairs, unrestricted against restricted.
+//
+// The restricted rate (flip_sep, over the n_sep cells where the bootstrap CI
+// and the practical threshold both separate the winner from second place) is
+// the honest headline, so it carries the accent; the unrestricted rate sits
+// beside it in grey. Every bar prints the cell count it was computed over,
+// because a flip rate without its denominator says nothing.
+//
+// Data is read at build time from public/data/web.json and handed to the
+// client script as JSON; nothing here is hardcoded except the >= 5 cutoff.
+
+import web from '../../../public/data/web.json';
+
+interface Props {
+	/** Minimum separated-cell count for a pair to be shown. */
+	minSep?: number;
+}
+const { minSep = 5 } = Astro.props;
+
+const pairs = web.pairs.filter((p) => p.n_sep >= minSep);
+
+const regimes = ['prefill', 'decode'].filter((r) => pairs.some((p) => p.regime === r));
+
+const panels = regimes.map((regime) => {
+	const rows = pairs
+		.filter((p) => p.regime === regime)
+		.slice()
+		.sort((a, b) => b.flip - a.flip);
+	const gpus = new Set(rows.flatMap((p) => [p.a, p.b]));
+	return { regime, rows, nGpus: gpus.size };
+});
+
+const id = 'portability-flip';
+---
+
+<div class="pflip" id={id}>
+	<div class="pflip-legend">
+		<span class="pflip-key"><i class="sw sw-all"></i>All cells, winner by median latency</span>
+		<span class="pflip-key"><i class="sw sw-sep"></i>Cells with a separated winner (bootstrap CI and {
+			((web.separation.practical_threshold - 1) * 100).toFixed(0)
+		}% practical threshold)</span>
+	</div>
+
+	{
+		panels.map((panel) => (
+			<section class="pflip-panel">
+				<h4>
+					{panel.regime === 'prefill' ? 'Prefill' : 'Decode'}
+					<span>
+						{panel.rows.length} device pairs over {panel.nGpus} GPUs
+					</span>
+				</h4>
+				<div class="pflip-chart" data-panel={panel.regime} />
+			</section>
+		))
+	}
+
+	<p class="pflip-note">
+		Numbers at the end of each bar are the cells the rate was computed over. Pairs with fewer than
+		{' '}{minSep} separated cells are not drawn. Decode pairs are confounded: the A10 and A100 decode
+		rows come from a different commit and driver than the H100 and L40 rows, so a decode flip mixes
+		hardware with software provenance. Prefill is commit-homogeneous. Every rate is scoped to this
+		software snapshot (torch {web.software.torch}, CUDA {web.software.cuda}).
+	</p>
+
+	<script type="application/json" data-pflip-data set:html={JSON.stringify(panels)} />
+</div>
+
+<style>
+	.pflip {
+		font-family: var(--font-body);
+		color: var(--text-primary);
+	}
+
+	.pflip-legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px 28px;
+		margin-bottom: 20px;
+		font-size: 14px;
+		color: var(--text-secondary);
+	}
+
+	.pflip-key {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.sw {
+		width: 22px;
+		height: 10px;
+		flex: none;
+	}
+	.sw-all {
+		background: #9e9e9e;
+	}
+	.sw-sep {
+		background: var(--accent);
+	}
+
+	.pflip-panel + .pflip-panel {
+		margin-top: 28px;
+	}
+
+	.pflip-panel h4 {
+		margin: 0 0 6px;
+		font-family: var(--font-heading);
+		font-size: 15px;
+		font-weight: 600;
+		letter-spacing: 0.01em;
+	}
+
+	.pflip-panel h4 span {
+		font-weight: 400;
+		color: var(--text-secondary);
+	}
+	.pflip-panel h4 span::before {
+		content: ' · ';
+	}
+
+	.pflip-chart {
+		overflow-x: auto;
+	}
+
+	.pflip-note {
+		margin: 20px 0 0;
+		max-width: 68ch;
+		font-size: 14px;
+		line-height: 1.6;
+		color: var(--text-secondary);
+	}
+</style>
+
+<script>
+	import * as Plot from '@observablehq/plot';
+
+	type Row = {
+		regime: string;
+		a: string;
+		b: string;
+		n: number;
+		flip: number;
+		n_sep: number;
+		flip_sep: number;
+	};
+	type Panel = { regime: string; rows: Row[]; nGpus: number };
+
+	const GREY = '#9e9e9e';
+	const label = (d: Row) => `${d.a} vs ${d.b}`;
+
+	function mount(root: HTMLElement) {
+		const panels: Panel[] = JSON.parse(
+			root.querySelector<HTMLElement>('[data-pflip-data]')!.textContent!
+		);
+		const all = panels.flatMap((p) => p.rows);
+		// One x domain across both panels, so prefill and decode are comparable.
+		const top = Math.max(...all.map((d) => Math.max(d.flip, d.flip_sep)));
+
+		const draw = () => {
+			const css = getComputedStyle(document.documentElement);
+			const accent = css.getPropertyValue('--accent').trim() || '#1769aa';
+			const text = css.getPropertyValue('--text-primary').trim() || '#171717';
+			const muted = css.getPropertyValue('--text-secondary').trim() || '#5f6368';
+
+			for (const panel of panels) {
+				const host = root.querySelector<HTMLElement>(`[data-panel="${panel.regime}"]`)!;
+				const width = Math.max(520, host.clientWidth || 720);
+
+				// Two bars per pair: faceted rows keep the pair label on one line.
+				const bars = panel.rows.flatMap((d) => [
+					{ pair: label(d), kind: 'all', value: d.flip, cells: d.n },
+					{ pair: label(d), kind: 'sep', value: d.flip_sep, cells: d.n_sep },
+				]);
+
+				const plot = Plot.plot({
+					width,
+					height: panel.rows.length * 42 + 46,
+					marginLeft: 108,
+					marginRight: 64,
+					marginTop: 8,
+					marginBottom: 34,
+					style: {
+						background: 'transparent',
+						color: muted,
+						fontFamily: "'IBM Plex Mono', ui-monospace, Consolas, monospace",
+						fontSize: '12px',
+						fontVariantNumeric: 'tabular-nums',
+					},
+					x: {
+						domain: [0, Math.min(100, top * 100 * 1.16)],
+						label: 'Winner flips between the two GPUs (% of cells)',
+						labelAnchor: 'left',
+						labelOffset: 30,
+						ticks: 5,
+						tickSize: 3,
+						grid: false,
+					},
+					fy: { axis: 'left', domain: panel.rows.map(label), label: null },
+					y: { axis: null, domain: ['all', 'sep'], padding: 0.22 },
+					color: { domain: ['all', 'sep'], range: [GREY, accent] },
+					marks: [
+						Plot.barX(bars, {
+							fy: 'pair',
+							y: 'kind',
+							x: (d) => d.value * 100,
+							fill: 'kind',
+							insetTop: 1,
+							insetBottom: 1,
+						}),
+						Plot.text(bars, {
+							fy: 'pair',
+							y: 'kind',
+							x: (d) => d.value * 100,
+							text: (d) => String(d.cells),
+							textAnchor: 'start',
+							dx: 5,
+							fill: (d) => (d.kind === 'sep' ? text : muted),
+						}),
+						Plot.ruleX([0], { stroke: muted, strokeWidth: 1 }),
+					],
+				});
+
+				host.replaceChildren(plot);
+			}
+		};
+
+		draw();
+
+		let timer: number;
+		const redraw = () => {
+			clearTimeout(timer);
+			timer = window.setTimeout(draw, 150);
+		};
+		window.addEventListener('resize', redraw);
+		window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', redraw);
+	}
+
+	// ponytail: no framework integration is installed, so the island defers
+	// itself instead of relying on client:visible.
+	for (const root of document.querySelectorAll<HTMLElement>('.pflip')) {
+		const io = new IntersectionObserver((entries) => {
+			if (entries.some((e) => e.isIntersecting)) {
+				io.disconnect();
+				mount(root);
+			}
+		});
+		io.observe(root);
+	}
+</script>

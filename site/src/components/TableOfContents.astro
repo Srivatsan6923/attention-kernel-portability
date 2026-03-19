@@ -1,0 +1,64 @@
+---
+import type { MarkdownHeading } from 'astro';
+
+interface Props {
+	headings: MarkdownHeading[];
+	variant?: 'side' | 'inline';
+}
+
+const { headings, variant = 'side' } = Astro.props;
+const items = headings.filter((h) => h.depth === 2 || h.depth === 3);
+---
+
+{
+	items.length > 0 &&
+		(variant === 'side' ? (
+			<nav class="toc-side" aria-label="Sections">
+				<div class="toc-label">Contents</div>
+				<ol>
+					{items.map((h) => (
+						<li class={`depth-${h.depth}`}>
+							<a href={`#${h.slug}`} data-toc={h.slug}>
+								{h.text}
+							</a>
+						</li>
+					))}
+				</ol>
+			</nav>
+		) : (
+			<details class="toc-inline">
+				<summary>Contents</summary>
+				<ol>
+					{items.map((h) => (
+						<li class={`depth-${h.depth}`}>
+							<a href={`#${h.slug}`} data-toc={h.slug}>
+								{h.text}
+							</a>
+						</li>
+					))}
+				</ol>
+			</details>
+		))
+}
+
+<script>
+	// Scroll spy: highlight the heading nearest the top of the viewport.
+	const links = document.querySelectorAll<HTMLAnchorElement>('a[data-toc]');
+	const slugs = [...new Set([...links].map((a) => a.dataset.toc!))];
+	const heads = slugs
+		.map((s) => document.getElementById(s))
+		.filter((el): el is HTMLElement => el !== null);
+
+	if (heads.length) {
+		let current = '';
+		const mark = () => {
+			const above = heads.filter((h) => h.getBoundingClientRect().top < 120);
+			const slug = (above.length ? above[above.length - 1] : heads[0]).id;
+			if (slug === current) return;
+			current = slug;
+			links.forEach((a) => a.classList.toggle('active', a.dataset.toc === slug));
+		};
+		mark();
+		addEventListener('scroll', mark, { passive: true });
+	}
+</script>

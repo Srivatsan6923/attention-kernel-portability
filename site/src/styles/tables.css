@@ -1,0 +1,93 @@
+/* Data tables: white ground, one grey header row, horizontal rules only. */
+
+.research-table {
+	margin: 32px 0;
+}
+
+.research-table .table-scroll {
+	overflow-x: auto;
+}
+
+.research-table caption,
+.research-table .table-caption {
+	text-align: left;
+	font-family: var(--font-body);
+	font-size: 14.5px;
+	line-height: 1.5;
+	color: var(--text-secondary);
+	margin-top: 10px;
+}
+
+.article-body table,
+.research-table table {
+	width: 100%;
+	border-collapse: collapse;
+	background: var(--background);
+	font-family: var(--font-body);
+	font-size: 14.5px;
+	line-height: 1.45;
+	color: var(--text-primary);
+}
+
+.article-body table th,
+.research-table table th {
+	background: var(--surface);
+	font-family: var(--font-heading);
+	font-weight: 600;
+	text-align: left;
+	white-space: nowrap;
+	padding: 9px 12px;
+	border-bottom: 1px solid var(--border);
+}
+
+.article-body table td,
+.research-table table td {
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--border);
+	vertical-align: top;
+}
+
+/* Numeric columns: right-aligned, tabular, monospaced digits. */
+.article-body table td.num,
+.article-body table th.num,
+.research-table table td.num,
+.research-table table th.num {
+	text-align: right;
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.research-table table th.num {
+	font-family: var(--font-heading);
+}
+
+.research-table table .best {
+	font-weight: 700;
+}
+
+/* Zebra only where a table is long enough to lose the row. */
+.research-table.long table tbody tr:nth-child(even) td {
+	background: var(--surface);
+}
+
+/* The one place coloured cells are allowed: the support/failure matrix. */
+.research-table table td.ok {
+	background: color-mix(in srgb, var(--success) 12%, var(--background));
+	color: var(--success);
+}
+
+.research-table table td.warn {
+	background: color-mix(in srgb, var(--warning) 12%, var(--background));
+	color: var(--warning);
+}
+
+.research-table table td.bad {
+	background: color-mix(in srgb, var(--failure) 12%, var(--background));
+	color: var(--failure);
+}
+
+.research-table table td.none {
+	background: var(--surface);
+	color: var(--text-secondary);
+}

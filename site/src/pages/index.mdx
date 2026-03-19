@@ -1,0 +1,686 @@
+---
+layout: ../layouts/ResearchPost.astro
+eyebrow: 'ML SYSTEMS · GPU INFERENCE'
+title: Attention Kernel Portability Across GPU Architectures
+standfirst: A dispatch-verified study of prefill and single-token KV-cache decode across Ampere, Ada, Hopper and Blackwell.
+date: '2026-08-31'
+readTime: '19 min read'
+links:
+  - label: Code
+    href: https://github.com/Srivatsan6923/attention-kernel-portability
+  - label: Technical report
+    href: https://github.com/Srivatsan6923/attention-kernel-portability/blob/main/README.md
+  - label: Raw results
+    href: /data/web.json
+  - label: Reproduce
+    href: https://github.com/Srivatsan6923/attention-kernel-portability#reproduce
+---
+
+import ResultStrip from '../components/ResultStrip.astro';
+import ResearchTable from '../components/ResearchTable.astro';
+import ResearchFigure from '../components/ResearchFigure.astro';
+import Observation from '../components/Observation.astro';
+import PrefillLatency from '../components/charts/PrefillLatency.astro';
+import PrefillSpeedup from '../components/charts/PrefillSpeedup.astro';
+import DecodeLatency from '../components/charts/DecodeLatency.astro';
+import DecodeWinnerMap from '../components/charts/DecodeWinnerMap.astro';
+import Roofline from '../components/charts/Roofline.astro';
+import PortabilityFlip from '../components/charts/PortabilityFlip.astro';
+import web from '../../public/data/web.json';
+
+export const pct = (x, d = 1) => `${(100 * x).toFixed(d)}%`;
+export const n0 = (x) => x.toLocaleString('en-US');
+export const sig = (x) => x.toLocaleString('en-US', { maximumSignificantDigits: 4 });
+export const at = (metric, gpu, impl, x) => {
+	const s = web[metric] && web[metric][gpu] && web[metric][gpu][impl];
+	if (!s) return null;
+	const i = s.x.indexOf(x);
+	return i < 0 ? null : s.y[i];
+};
+export const bestFixed = Object.entries(web.selector.vs_fixed || {})
+  .map(([k, v]) => ({ name: k, ...v }))
+  .sort((x, y) => x.median - y.median)[0] || { median: NaN, p95: NaN, coverage: NaN };
+export const best = bestFixed;
+export const P = (regime, a, b) => web.pairs.find((p) => p.regime === regime && p.a === a && p.b === b);
+export const covOf = (impl, status) =>
+	web.coverage.filter((c) => c.implementation === impl && c.status === status).reduce((t, c) => t + c.n, 0);
+export const covAll = (impl) => web.coverage.filter((c) => c.implementation === impl).reduce((t, c) => t + c.n, 0);
+export const IMPLS = [...new Set(web.coverage.map((c) => c.implementation))].sort();
+export const flowsOf = (impl) => web.dispatch.flows.filter((f) => f.impl === impl);
+export const flowN = (impl, observed) => {
+	const f = flowsOf(impl).find((r) => r.observed === observed);
+	return f ? f.n : 0;
+};
+export const mha = (gpu, hkv, N, impl) =>
+	web.mha_vs_gqa.find((r) => r.gpu === gpu && r.hkv === hkv && r.N === N && r.impl === impl);
+export const winners = (regime, gpu) =>
+	Object.entries((web.winners[regime] || {})[gpu] || {}).sort((a, b) => b[1] - a[1]);
+export const winnerTotal = (regime, gpu) => winners(regime, gpu).reduce((t, e) => t + e[1], 0);
+export const speed = (gpu, B, N, impl) =>
+	web.prefill_speedup.find((r) => r.gpu === gpu && r.B === B && r.N === N && r.impl === impl);
+export const dev = (gpu) => web.devices.find((d) => d.gpu === gpu);
+export const thr = ((web.separation.practical_threshold - 1) * 100).toFixed(0);
+export const PF = web.separation.by_regime.prefill;
+export const DC = web.separation.by_regime.decode;
+export const prefillN = [...new Set(web.prefill_speedup.map((r) => r.N))].sort((a, b) => a - b);
+export const prefillB = [...new Set(web.prefill_speedup.map((r) => r.B))].sort((a, b) => a - b);
+export const decodeCells = [].concat(...Object.values(web.decode_winner_map));
+export const decodeN = [...new Set(decodeCells.map((r) => r.N))].sort((a, b) => a - b);
+export const decodeB = [...new Set(decodeCells.map((r) => r.y))].sort((a, b) => a - b);
+export const rlDecode = web.roofline.filter((r) => r.regime === 'decode');
+export const rlPrefill = web.roofline.filter((r) => r.regime === 'prefill');
+export const rng = (rows, k) => [Math.min(...rows.map((r) => r[k])), Math.max(...rows.map((r) => r[k]))];
+export const hkvHigh = Math.max(...web.mha_vs_gqa.map((r) => r.hkv));
+export const hkvLow = Math.min(...web.mha_vs_gqa.map((r) => r.hkv));
+export const longN = Math.max(...decodeN);
+export const longPrefillN = Math.max(...prefillN);
+
+<ResultStrip
+	items={[
+		{
+			value: n0(web.headline.cells),
+			label: 'Matched cells compared',
+			detail: `${n0(web.headline.ok_rows)} clean rows of ${n0(web.headline.rows)} measured, on ${web.headline.devices} GPUs`,
+		},
+		{
+			value: pct(P('prefill', 'A100', 'H100').flip_sep),
+			label: 'Prefill winner changes, A100 to H100',
+			detail: `Restricted rate over ${P('prefill', 'A100', 'H100').n_sep} separated cells; ${pct(P('prefill', 'A100', 'H100').flip)} raw over ${P('prefill', 'A100', 'H100').n}`,
+		},
+		{
+			value: `${web.headline.dispatch_mismatch_pct.toFixed(3)}%`,
+			label: 'Dispatch mismatch, probed rows only',
+			detail: `${(100 - web.headline.probed_pct).toFixed(1)}% of cells never probed, so their mismatch rate is unknown`,
+		},
+		{
+			value: `${web.headline.selector_median_regret.toFixed(3)}x`,
+			label: 'Median selector regret',
+			detail: `p95 ${web.headline.selector_p95_regret.toFixed(3)}x over ${n0(web.selector.n)} cells`,
+		},
+	]}
+/>
+
+## Summary
+
+Across {n0(web.headline.cells)} matched cells on {web.headline.devices} GPUs spanning Ampere, Ada, Hopper and Blackwell, only {pct(web.separation.overall)} have a fastest implementation that both a bootstrap confidence interval and a {thr}% practical threshold separate from second place, and among those the median winner leads by {((PF.median_ratio - 1) * 100).toFixed(1)}% in prefill (n={PF.n}) and {((DC.median_ratio - 1) * 100).toFixed(1)}% in decode (n={DC.n}). Restricted to separated cells the fastest decode path survives a change of device among Ampere, Ada and Hopper ({pct(P('decode', 'A100', 'L40').flip_sep)} of {P('decode', 'A100', 'L40').n_sep} cells change winner between A100 and L40, {pct(P('decode', 'A100', 'H100').flip_sep)} of {P('decode', 'A100', 'H100').n_sep} between A100 and H100) and fails against Blackwell ({pct(P('decode', 'H100', 'RTX 5090').flip_sep)} of {P('decode', 'H100', 'RTX 5090').n_sep} between H100 and the RTX 5090), because the library that leads decode elsewhere does not run there at all. The fastest prefill path does not transfer in the first place ({pct(P('prefill', 'A100', 'H100').flip_sep)} of {P('prefill', 'A100', 'H100').n_sep} cells change winner between A100 and H100). Dispatch probes disagreed with the requested backend on {web.headline.dispatch_mismatch_pct.toFixed(3)}% of the rows that were probed, but {(100 - web.headline.probed_pct).toFixed(1)}% of cells were never probed at all and the gap is worst on the fastest library paths, so the mismatch rate there is unknown rather than zero.
+
+The question this sweep was built to answer is narrow: if a serving stack picks one attention implementation on the hardware it was tuned on, how much does that choice cost on a different part, and can the measurement even tell.
+
+<ResearchTable caption="What each question is answered with, and the section that carries it. Every entry is scoped to this software snapshot and to the specific kernel, GPU and regime it was measured on.">
+
+<table>
+	<thead>
+		<tr>
+			<th>Question</th>
+			<th>Measurement</th>
+			<th>Section</th>
+		</tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Did the kernel that was requested actually run?</td>
+			<td>Per-row dispatch probe of the observed kernel flow, with an explicit unprobed category</td>
+			<td>Validity before performance</td>
+		</tr>
+		<tr>
+			<td>Is a latency difference real?</td>
+			<td>Bootstrap CI on the median plus a {thr}% practical threshold; cells failing either are unseparated</td>
+			<td>Portability</td>
+		</tr>
+		<tr>
+			<td>Does the fastest implementation carry across devices?</td>
+			<td>Winner flip rate per device pair, raw and restricted to separated cells, with both denominators</td>
+			<td>Portability</td>
+		</tr>
+		<tr>
+			<td>What does a fixed choice cost?</td>
+			<td>Regret of a fitted selector and of each fixed policy against the per-cell best, median and p95</td>
+			<td>Deployment guidance</td>
+		</tr>
+	</tbody>
+</table>
+
+</ResearchTable>
+
+## Experimental scope
+
+Five devices, three architectures, one harness. The event floor is the measured CUDA-event timing resolution on that host, and it sets the smallest latency difference the harness can resolve there. Bandwidth is the vendor figure for the part, used only to put achieved numbers in context; it is not a measurement from these runs.
+
+<ResearchTable caption={`The ${web.devices.length} devices in the sweep, all analysed at commit ${web.devices[0].sha}. L40S and H100 sit on different driver builds than the rest, which is a confound for anything compared across those panels.`}>
+
+<table>
+	<thead>
+		<tr>
+			<th>GPU</th>
+			<th>Architecture</th>
+			<th>CC</th>
+			<th class="num">SMs</th>
+			<th class="num">Memory (GB)</th>
+			<th class="num">L2 (MB)</th>
+			<th class="num">Bandwidth (GB/s)</th>
+			<th class="num">Event floor (us)</th>
+			<th>Driver</th>
+		</tr>
+	</thead>
+	<tbody>
+		{web.devices.map((d) => (
+			<tr>
+				<td>{d.gpu}</td>
+				<td>{d.arch}</td>
+				<td>{d.cc}</td>
+				<td class="num">{d.sm}</td>
+				<td class="num">{d.mem_gb.toFixed(1)}</td>
+				<td class="num">{d.l2_mb.toFixed(1)}</td>
+				<td class="num">{d.bw_gbs.toFixed(0)}</td>
+				<td class="num">{d.event_us.toFixed(2)}</td>
+				<td>{d.driver}</td>
+			</tr>
+		))}
+	</tbody>
+</table>
+
+</ResearchTable>
+
+The grid has two regimes. Prefill runs batch {prefillB.join(', ')} against sequence lengths {prefillN.map((n) => n0(n)).join(', ')} at head_dim {web.prefill_slice.head_dim}, {web.prefill_slice.dtype}, {web.prefill_slice.mode} only; the figures below hold batch at {web.prefill_slice.batch} unless a control says otherwise. Decode is a single-token append against a KV cache of length {decodeN.map((n) => n0(n)).join(', ')} at batch {decodeB.join(', ')}, head_dim {web.decode_slice.head_dim}, {web.decode_slice.dtype}, with {web.decode_slice.hkv} KV heads in the main slice and {hkvHigh} KV heads used only for the grouped-query comparison. {IMPLS.length} implementation ids were measured, collapsing into seven backend families, and {n0(web.headline.rows)} timed rows were collected in total.
+
+## Implementation provenance
+
+Splitting authored code from integrated code matters here, because a fair share of this result is a statement about library builds rather than about kernels written for this study.
+
+Written for this project: the PyTorch reference (`P0-naive`, `D0-naive-kv`), which materialises the score matrix and exists as a correctness anchor rather than a contender; the `torch.compile` variants (`P1-inductor` with its `nofuse` and `where` spellings, and `D1-inductor`), which are compilation configurations of that reference; the SDPA call sites (`P2b-sdpa-mem-eff`, `P2c-sdpa-flash`, `P2d-sdpa-cudnn`, `D2-sdpa`), which force one PyTorch backend each and therefore measure the backend PyTorch dispatches into rather than code written here; and `P3-triton`, a Triton attention kernel carrying a local BF16 modification made for this sweep.
+
+Integrated and measured, not authored: `P4-fa2`, `P4h-fa3`, `D3-fa-kvcache`, `D6-fa-prefill-at-1` and `D4-flashinfer` are calls into prebuilt CUDA libraries, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. Nothing inside those paths was modified. Where one of them wins, the finding is about that library build on that device at this software snapshot, and it does not transfer to another version of the same library.
+
+One layout caveat applies to the FlashInfer comparison throughout. The page size in every decode cell equals the KV length by construction, so the FlashInfer and FlashAttention decode entries differ by library, not by KV layout. No page-size sweep was run, and no number here can be read as a cost of one layout against another.
+
+## Validity before performance
+
+A latency table is worth nothing if the row did not run the kernel it claims. Three checks come before any timing comparison: what ran, what dispatched, and whether the output was right.
+
+Outcomes are four distinct things and are kept apart. `OK` is a clean timed row. `UNSUPPORTED` means the implementation declined the configuration by design, for example FlashAttention-3 on pre-Hopper parts. `OOM_PREDICTED` means the allocation was computed in advance to exceed memory and the cell was skipped without running. `OOM` means an allocation was attempted and actually failed. Collapsing these into one failure surface would read as instability where most of it is a documented refusal.
+
+<ResearchTable long caption={`Row outcomes by implementation, summed over all ${web.headline.devices} devices and both regimes. ${n0(web.status_counts.OK)} rows ran clean, ${n0(web.status_counts.UNSUPPORTED)} were declined by the implementation, ${n0(web.status_counts.OOM_PREDICTED)} were skipped by the memory predictor and ${n0(web.status_counts.OOM)} allocations failed at run time.`}>
+
+<table>
+	<thead>
+		<tr>
+			<th>Implementation</th>
+			<th class="num">OK</th>
+			<th class="num">UNSUPPORTED</th>
+			<th class="num">OOM_PREDICTED</th>
+			<th class="num">OOM</th>
+			<th class="num">Clean (%)</th>
+		</tr>
+	</thead>
+	<tbody>
+		{IMPLS.map((im) => (
+			<tr>
+				<td><code>{im}</code></td>
+				<td class="num">{n0(covOf(im, 'OK'))}</td>
+				<td class="num">{n0(covOf(im, 'UNSUPPORTED'))}</td>
+				<td class="num">{n0(covOf(im, 'OOM_PREDICTED'))}</td>
+				<td class="num">{n0(covOf(im, 'OOM'))}</td>
+				<td class="num">{((100 * covOf(im, 'OK')) / covAll(im)).toFixed(1)}</td>
+			</tr>
+		))}
+	</tbody>
+</table>
+
+</ResearchTable>
+
+Dispatch was probed per row by reading back the kernel flow that actually executed. Of the probed rows, {web.headline.dispatch_mismatch_pct.toFixed(3)}% observed a flow other than the one the call site requested. That number carries a large asterisk: {(100 - web.headline.probed_pct).toFixed(1)}% of cells were never probed, the miss is concentrated on exactly the fast library paths that matter most, and an unprobed row is not a matching row. `P4-fa2` is the clearest case, with {n0(flowN('P4-fa2', 'unprobed'))} unprobed rows against {n0(flowN('P4-fa2', 'flash-attn'))} confirmed as `flash-attn`.
+
+<ResearchTable long caption="Observed kernel flow per implementation, in rows. Unprobed rows are shown as their own category and are never folded into agreement; the mismatch rate on them is unknown.">
+
+<table>
+	<thead>
+		<tr>
+			<th>Implementation</th>
+			<th>Observed flows (rows)</th>
+			<th class="num">Unprobed rows</th>
+		</tr>
+	</thead>
+	<tbody>
+		{IMPLS.filter((im) => flowsOf(im).length > 0).map((im) => (
+			<tr>
+				<td><code>{im}</code></td>
+				<td>
+					{flowsOf(im)
+						.filter((f) => f.observed !== 'unprobed')
+						.map((f) => `${f.observed} ${n0(f.n)}`)
+						.join(', ')}
+				</td>
+				<td class="num">{n0(flowN(im, 'unprobed'))}</td>
+			</tr>
+		))}
+	</tbody>
+</table>
+
+</ResearchTable>
+
+Probe coverage is also uneven across devices, and the device with the thinnest coverage reports the highest mismatch rate, which is the wrong way round for confidence.
+
+<ResearchTable caption="Dispatch probe coverage and mismatch by device. Mismatch is a percentage of probed rows on that device only, so a low mismatch under low coverage says little.">
+
+<table>
+	<thead>
+		<tr>
+			<th>GPU</th>
+			<th class="num">Cells probed (%)</th>
+			<th class="num">Mismatch of probed (%)</th>
+		</tr>
+	</thead>
+	<tbody>
+		{web.devices.filter((d) => web.dispatch.by_gpu[d.gpu]).map((d) => (
+			<tr>
+				<td>{d.gpu} {d.cc}</td>
+				<td class="num">{web.dispatch.by_gpu[d.gpu].probed.toFixed(1)}</td>
+				<td class="num">{web.dispatch.by_gpu[d.gpu].mismatch.toFixed(3)}</td>
+			</tr>
+		))}
+	</tbody>
+</table>
+
+</ResearchTable>
+
+One dispatch result is worth stating on its own. The Inductor fused-attention counter fired on {web.dispatch.inductor_counter_fired} of {n0(web.dispatch.inductor_rows)} compiled rows, so `torch.compile` did not rewrite the reference implementation into a fused attention call anywhere in this sweep. The compiled rows that were probed report a `triton` flow ({n0(flowN('P1-inductor', 'triton'))} rows for `P1-inductor`), which is generated pointwise and matmul code around the same materialised score matrix rather than a fused attention kernel. Whatever `P1-inductor` costs, it is not the cost of a compiler-discovered flash attention.
+
+Correctness was checked against the reference on a subsample of configurations. No implementation failed.
+
+<ResearchTable long caption="Numerical agreement against the PyTorch reference. Maximum relative error is dominated by elements where the reference value is near zero and is not a useful summary on its own; maximum absolute error and cosine similarity are. The `vs baseline` column is the ratio of this implementation's error to the reference path's own error under the same comparison.">
+
+<table>
+	<thead>
+		<tr>
+			<th>Implementation</th>
+			<th class="num">Checked rows</th>
+			<th class="num">Max abs err</th>
+			<th class="num">Max rel err</th>
+			<th class="num">Min cosine</th>
+			<th class="num">vs baseline</th>
+			<th class="num">Failures</th>
+		</tr>
+	</thead>
+	<tbody>
+		{web.correctness.map((c) => (
+			<tr>
+				<td><code>{c.impl}</code></td>
+				<td class="num">{n0(c.n)}</td>
+				<td class="num">{c.max_abs.toFixed(3)}</td>
+				<td class="num">{sig(c.max_rel)}</td>
+				<td class="num">{c.min_cos.toFixed(3)}</td>
+				<td class="num">{c.vs_baseline.toFixed(3)}</td>
+				<td class="num">{c.fail}</td>
+			</tr>
+		))}
+	</tbody>
+</table>
+
+</ResearchTable>
+
+## Prefill
+
+Prefill is compute-shaped and commit-homogeneous: every prefill row in this sweep was analysed at commit {web.devices[0].sha}, so a difference between prefill panels is a difference of device and driver, not of harness version.
+
+<ResearchFigure
+	number={1}
+	id="fig-prefill-latency"
+	title={`Prefill median latency, achieved throughput and peak memory against sequence length, batch ${web.prefill_slice.batch}, head_dim ${web.prefill_slice.head_dim}, ${web.prefill_slice.dtype}`}
+	dataHref="/data/web.json"
+	wide={false}
+>
+	<PrefillLatency />
+	<Observation slot="observations">
+		<li>
+			On H100 at N={n0(longPrefillN)}, FlashAttention-3 runs at {sig(at('prefill_latency', 'H100', 'P4h-fa3', longPrefillN))} us
+			against {sig(at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', longPrefillN))} us for cuDNN-backed SDPA,
+			{' '}{sig(at('prefill_latency', 'H100', 'P3-triton', longPrefillN))} us for the local Triton kernel,
+			{' '}{sig(at('prefill_latency', 'H100', 'P4-fa2', longPrefillN))} us for FlashAttention-2 and
+			{' '}{sig(at('prefill_latency', 'H100', 'P2c-sdpa-flash', longPrefillN))} us for flash-backed SDPA. The lead over
+			second place is {(((at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', longPrefillN) / at('prefill_latency', 'H100', 'P4h-fa3', longPrefillN)) - 1) * 100).toFixed(1)}%,
+			which clears the {thr}% practical threshold; most cells in this grid do not.
+		</li>
+		<li>
+			The ordering inverts at short sequence length. At N={n0(Math.min(...prefillN))} on the same device cuDNN-backed SDPA
+			takes {sig(at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', 256))} us and FlashAttention-3 takes
+			{' '}{sig(at('prefill_latency', 'H100', 'P4h-fa3', 256))} us, with FlashAttention-2 at
+			{' '}{sig(at('prefill_latency', 'H100', 'P4-fa2', 256))} us and the Triton kernel at
+			{' '}{sig(at('prefill_latency', 'H100', 'P3-triton', 256))} us. These are tens of microseconds above an event floor of
+			{' '}{dev('H100').event_us.toFixed(2)} us, so the short-N ranking is sensitive to launch and setup cost rather than to
+			kernel throughput.
+		</li>
+		<li>
+			On A10 at N={n0(longPrefillN)} the local Triton kernel is fastest at {sig(at('prefill_latency', 'A10', 'P3-triton', longPrefillN))} us,
+			against {sig(at('prefill_latency', 'A10', 'P2d-sdpa-cudnn', longPrefillN))} us for cuDNN-backed SDPA and
+			{' '}{sig(at('prefill_latency', 'A10', 'P4-fa2', longPrefillN))} us for FlashAttention-2, a lead of
+			{' '}{(((at('prefill_latency', 'A10', 'P2d-sdpa-cudnn', longPrefillN) / at('prefill_latency', 'A10', 'P3-triton', longPrefillN)) - 1) * 100).toFixed(1)}%
+			over second place. That sits well inside the {thr}% threshold, so on this cell the two are not separated and the
+			ranking should not be used to choose between them.
+		</li>
+		<li>
+			The reference path is a memory result, not a FLOP result. On H100 at N={n0(4096)} it takes
+			{' '}{sig(at('prefill_latency', 'H100', 'P0-naive', 4096))} us against
+			{' '}{sig(at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', 4096))} us for cuDNN-backed SDPA, and its peak memory is
+			{' '}{sig(at('prefill_memory', 'H100', 'P0-naive', 4096))} MB against
+			{' '}{sig(at('prefill_memory', 'H100', 'P4-fa2', 4096))} MB for FlashAttention-2. The fused kernels avoid
+			materialising the score matrix and the traffic that goes with it; they still perform the quadratic arithmetic that
+			exact attention requires.
+		</li>
+	</Observation>
+</ResearchFigure>
+
+Normalising against one baseline makes the shape of the win clearer, and the absolute latency is carried in every cell so that a large ratio on a small absolute number cannot be mistaken for a large saving.
+
+<ResearchFigure
+	number={2}
+	id="fig-prefill-speedup"
+	title="Prefill speedup over forced SDPA-flash by batch and sequence length, with absolute latency in every cell"
+	dataHref="/data/web.json"
+	wide={false}
+>
+	<PrefillSpeedup />
+	<Observation slot="observations">
+		<li>
+			The largest speedup in the grid is cuDNN-backed SDPA on L40S at batch {speed('L40S', 1, 256, 'P2d-sdpa-cudnn').B},
+			N={speed('L40S', 1, 256, 'P2d-sdpa-cudnn').N}: {speed('L40S', 1, 256, 'P2d-sdpa-cudnn').speedup.toFixed(2)}x, which is
+			{' '}{sig(speed('L40S', 1, 256, 'P2d-sdpa-cudnn').us)} us against {sig(speed('L40S', 1, 256, 'P2d-sdpa-cudnn').base_us)} us.
+			The ratio is large and the saving is
+			{' '}{sig(speed('L40S', 1, 256, 'P2d-sdpa-cudnn').base_us - speed('L40S', 1, 256, 'P2d-sdpa-cudnn').us)} us per call,
+			which is why no ratio on this page appears without its microseconds.
+		</li>
+		<li>
+			The worst cell is the reference path on L40S at batch {speed('L40S', 1, 8192, 'P0-naive').B},
+			N={n0(speed('L40S', 1, 8192, 'P0-naive').N)}: {speed('L40S', 1, 8192, 'P0-naive').speedup.toFixed(3)}x, or
+			{' '}{sig(speed('L40S', 1, 8192, 'P0-naive').us)} us against {sig(speed('L40S', 1, 8192, 'P0-naive').base_us)} us. That
+			is the cost of materialising scores at long sequence length, and it sets the scale the colour ramp has to be clamped
+			against.
+		</li>
+		<li>
+			FlashAttention-3 reaches {speed('H100', 1, 2048, 'P4h-fa3').speedup.toFixed(2)}x on H100 at batch
+			{' '}{speed('H100', 1, 2048, 'P4h-fa3').B}, N={n0(speed('H100', 1, 2048, 'P4h-fa3').N)}
+			({sig(speed('H100', 1, 2048, 'P4h-fa3').us)} us against {sig(speed('H100', 1, 2048, 'P4h-fa3').base_us)} us), and it
+			appears on no other panel: {n0(covOf('P4h-fa3', 'UNSUPPORTED'))} of its {n0(covAll('P4h-fa3'))} rows are
+			`UNSUPPORTED` because the build declines pre-Hopper parts. It is a Hopper result, not a portable one.
+		</li>
+		<li>
+			Ratios at short N sit close to the timing floor of the host, which ranges from
+			{' '}{Math.min(...web.devices.map((d) => d.event_us)).toFixed(2)} us to
+			{' '}{Math.max(...web.devices.map((d) => d.event_us)).toFixed(2)} us across these {web.headline.devices} devices. A cell
+			whose absolute latency is within a small multiple of that floor should be read as unresolved whatever its ratio says.
+		</li>
+	</Observation>
+</ResearchFigure>
+
+## Decode and the KV cache
+
+Single-token decode does very little arithmetic and moves the whole cache, so the useful model is bytes rather than FLOPs. The cache traffic for one decode step is
+
+$$
+\text{bytes} \;=\; 2 \, B \, H_{kv} \, N \, D \, s
+$$
+
+with $B$ the batch, $H_{kv}$ the number of KV heads, $N$ the KV length, $D$ the head dimension, $s$ the bytes per element (2 for bf16), and the leading factor 2 counting the K and V tensors. The effective bandwidth below is that analytic byte count divided by measured time. It is a model rather than a profiler reading, and the byte model differs between implementations, so effective bandwidth compares one implementation against itself across shapes far more safely than it compares two implementations at one shape.
+
+Every decode comparison across devices in this section is confounded. The A10 and A100 decode rows were collected under a different commit and driver than the H100 and L40 rows, so a panel-to-panel change mixes hardware with software provenance and cannot be attributed to architecture alone. Prefill has no such split.
+
+<ResearchFigure
+	number={3}
+	id="fig-decode-latency"
+	title={`Single-token decode step time and effective KV bandwidth against KV length, hkv=${web.decode_slice.hkv}, head_dim=${web.decode_slice.head_dim}, ${web.decode_slice.dtype}`}
+	dataHref="/data/web.json"
+	wide={false}
+>
+	<DecodeLatency />
+	<Observation slot="observations">
+		<li>
+			At batch 1 on H100 the FlashAttention KV-cache path is nearly flat in KV length, moving from
+			{' '}{sig(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', 512))} us at N=512 to
+			{' '}{sig(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN))} us at N={n0(longN)}, a factor of
+			{' '}{(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN) / at('decode_latency_b1', 'H100', 'D3-fa-kvcache', 512)).toFixed(2)}x
+			across a {longN / 512}x increase in cache length. At that batch the step is dominated by fixed cost rather than by
+			cache traffic.
+		</li>
+		<li>
+			FlashInfer takes the opposite shape at batch 1 on H100: {sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', 512))} us
+			at N=512, the fastest entry there, rising to {sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN))} us at
+			N={n0(longN)}, which is
+			{' '}{(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN) / at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN)).toFixed(2)}x
+			the FlashAttention path at the same point. The crossover between the two libraries sits inside the measured range, so
+			a single-token serving path picks a different winner at short and long context on one GPU.
+		</li>
+		<li>
+			At batch 32 the ordering changes again. On H100 at N={n0(longN)} the FlashAttention KV-cache path takes
+			{' '}{sig(at('decode_latency_b32', 'H100', 'D3-fa-kvcache', longN))} us, SDPA
+			{' '}{sig(at('decode_latency_b32', 'H100', 'D2-sdpa', longN))} us, FlashInfer
+			{' '}{sig(at('decode_latency_b32', 'H100', 'D4-flashinfer', longN))} us and the reference
+			{' '}{sig(at('decode_latency_b32', 'H100', 'D0-naive-kv', longN))} us. The FlashAttention path there moves
+			{' '}{sig(at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN))} GB/s of modelled KV traffic against the
+			{' '}{dev('H100').bw_gbs.toFixed(0)} GB/s vendor figure for the part,
+			{' '}{((100 * at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN)) / dev('H100').bw_gbs).toFixed(0)}% of it under the
+			analytic byte model.
+		</li>
+		<li>
+			The compiled decode path barely exists as a comparison. `D1-inductor` produced {n0(covOf('D1-inductor', 'OK'))} clean
+			rows against {n0(covOf('D1-inductor', 'UNSUPPORTED'))} declined, so its line covers a thin part of the grid and the
+			points it does cover are not a general result for `torch.compile` on decode.
+		</li>
+	</Observation>
+</ResearchFigure>
+
+<DecodeWinnerMap number={4} />
+
+Grouped-query attention changes the traffic term directly, and measured time follows it closely. On H100 at N={n0(longN)}, going from {mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB of cache at {hkvHigh} KV heads to {mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB at {hkvLow} KV heads, a {(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb / mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb).toFixed(1)}x reduction in bytes, takes the FlashAttention KV-cache step from {sig(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us)} us to {sig(mha('H100', hkvLow, longN, 'D3-fa-kvcache').us)} us, a {(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us / mha('H100', hkvLow, longN, 'D3-fa-kvcache').us).toFixed(1)}x reduction in time. SDPA moves {sig(mha('H100', hkvHigh, longN, 'D2-sdpa').us)} us to {sig(mha('H100', hkvLow, longN, 'D2-sdpa').us)} us over the same change, and FlashInfer {sig(mha('H100', hkvHigh, longN, 'D4-flashinfer').us)} us to {sig(mha('H100', hkvLow, longN, 'D4-flashinfer').us)} us. The reference path is the exception, at {sig(mha('H100', hkvHigh, longN, 'D0-naive-kv').us)} us against {sig(mha('H100', hkvLow, longN, 'D0-naive-kv').us)} us, because its cost is dominated by the materialised score matrix rather than by the cache read. This is one slice on one device at this software snapshot, over {web.mha_vs_gqa.length} measured points in total, and it is not a general scaling law.
+
+## Attribution, and what cannot be attributed
+
+Before the roofline, the limits of what this data can explain.
+
+> Not collected, and therefore not claimed. {web.not_collected.join(' ')}
+
+There are no hardware counters for any run on any platform in this study. That rules out an occupancy table, a measured-traffic roofline, a launch-overhead fraction, and any statement of the form "this kernel is bound by X" that a profiler would have to support. What follows is a modelled placement of each measured point, and it should be read as a sanity check on the shape of the workload rather than as attribution.
+
+<ResearchFigure
+	number={5}
+	id="fig-roofline"
+	title="Achieved throughput against modelled arithmetic intensity, analytic traffic, no measured roof"
+	dataHref="/data/web.json"
+	wide={true}
+>
+	<Roofline />
+	<Observation slot="observations">
+		<li>
+			The two regimes separate by orders of magnitude in modelled arithmetic intensity. Decode points sit at
+			{' '}{[...new Set(rlDecode.map((r) => r.ai))].sort((a, b) => a - b).join(', ')} FLOP per byte and prefill points from
+			{' '}{rng(rlPrefill, 'ai')[0]} to {rng(rlPrefill, 'ai')[1]}, over {web.roofline.length} points in total
+			({rlPrefill.length} prefill, {rlDecode.length} decode).
+		</li>
+		<li>
+			Achieved throughput follows that split: decode tops out at {rng(rlDecode, 'tflops')[1].toFixed(2)} TFLOP/s in this
+			slice and prefill reaches {rng(rlPrefill, 'tflops')[1].toFixed(0)} TFLOP/s. That is consistent with decode being
+			traffic-shaped, but it is not evidence of a bandwidth bound, because no bytes were measured.
+		</li>
+		<li>
+			No compute roof and no bandwidth roof is drawn. No peak-FLOP figure was measured on any of these parts, and the x axis
+			is analytic traffic derived from tensor shapes, so a roof line would assert a ceiling this study never observed.
+		</li>
+		<li>
+			Because the byte model is per implementation, a point moving left or right between implementations at the same shape
+			reflects the model as much as the kernel. Compare points within one implementation across shapes, and read
+			cross-implementation horizontal distance as descriptive only.
+		</li>
+	</Observation>
+</ResearchFigure>
+
+## Portability
+
+This is the result the sweep was built for. A flip rate answers whether a choice made on one device survives a move to another, and it is interpretable only with two things attached: the number of cells it was computed over, and whether those cells had a winner worth naming in the first place.
+
+Of {n0(web.headline.cells)} matched cells, {pct(web.separation.overall)} have a winner separated from second place by both the bootstrap CI and the {thr}% practical threshold: {pct(PF.separated)} of {PF.n} prefill cells and {pct(DC.separated)} of {DC.n} decode cells. In the remaining majority the fastest implementation is fastest by an amount the measurement cannot defend, so a raw flip rate over all cells is partly counting noise reordering itself. The restricted rate, computed over separated cells only, is the number to read.
+
+<ResearchFigure
+	number={6}
+	id="fig-portability-flip"
+	title={`Winner flip rate per device pair, all cells against cells with a separated winner, ${web.pairs.length} pairs`}
+	dataHref="/data/web.json"
+	wide={true}
+>
+	<PortabilityFlip />
+	<Observation slot="observations">
+		<li>
+			Prefill does not transfer between Ampere and Hopper. A100 against H100 flips the winner on
+			{' '}{pct(P('prefill', 'A100', 'H100').flip_sep)} of {P('prefill', 'A100', 'H100').n_sep} separated cells
+			({pct(P('prefill', 'A100', 'H100').flip)} of {P('prefill', 'A100', 'H100').n} raw), and L40 against H100 on
+			{' '}{pct(P('prefill', 'L40', 'H100').flip_sep)} of {P('prefill', 'L40', 'H100').n_sep} separated cells
+			({pct(P('prefill', 'L40', 'H100').flip)} of {P('prefill', 'L40', 'H100').n} raw). Restricting to separated cells makes
+			the prefill picture worse rather than better: where the difference is real, it is real in a different direction.
+		</li>
+		<li>
+			Decode mostly transfers. A100 against L40 flips on {pct(P('decode', 'A100', 'L40').flip_sep)} of
+			{' '}{P('decode', 'A100', 'L40').n_sep} separated cells against {pct(P('decode', 'A100', 'L40').flip)} of
+			{' '}{P('decode', 'A100', 'L40').n} raw, and A100 against H100 on {pct(P('decode', 'A100', 'H100').flip_sep)} of
+			{' '}{P('decode', 'A100', 'H100').n_sep} against {pct(P('decode', 'A100', 'H100').flip)} of
+			{' '}{P('decode', 'A100', 'H100').n} raw. The raw rates alone would have said decode is as unstable as prefill; the
+			restriction is what separates the two regimes. Both of these pairs also cross the commit and driver split, so the
+			transfer is measured against a confound rather than a clean device swap.
+		</li>
+		<li>
+			Same-architecture pairs are not automatically safe. L40 against L40S in prefill, two sm89 parts, flips on
+			{' '}{pct(P('prefill', 'L40', 'L40S').flip_sep)} of only {P('prefill', 'L40', 'L40S').n_sep} separated cells
+			({pct(P('prefill', 'L40', 'L40S').flip)} of {P('prefill', 'L40', 'L40S').n} raw). That separated denominator is too
+			small to carry a conclusion, and the two parts sit on different driver builds ({dev('L40').driver} against
+			{' '}{dev('L40S').driver}), so this pair measures driver as much as silicon.
+		</li>
+		<li>
+			Every rate here is a fraction of cells within one device pair, in one regime, at one software snapshot, over
+			{' '}{web.headline.devices} GPUs; separated denominators across the {web.pairs.length} pairs range from
+			{' '}{Math.min(...web.pairs.map((p) => p.n_sep))} to {Math.max(...web.pairs.map((p) => p.n_sep))} cells. Pairs holding a
+			handful of separated cells are shown for completeness and should not be ranked against pairs holding dozens.
+		</li>
+	</Observation>
+</ResearchFigure>
+
+<ResearchTable long caption={`All ${web.pairs.length} device pairs. Flip (all) is over every matched cell in the pair; flip (separated) is over the cells where the winner clears both the bootstrap CI and the ${thr}% threshold. Decode pairs cross the commit and driver split described above; prefill pairs do not.`}>
+
+<table>
+	<thead>
+		<tr>
+			<th>Regime</th>
+			<th>Pair</th>
+			<th class="num">Cells</th>
+			<th class="num">Flip, all (%)</th>
+			<th class="num">Separated cells</th>
+			<th class="num">Flip, separated (%)</th>
+		</tr>
+	</thead>
+	<tbody>
+		{web.pairs.map((p) => (
+			<tr>
+				<td>{p.regime}</td>
+				<td>{p.a} vs {p.b}</td>
+				<td class="num">{p.n}</td>
+				<td class="num">{(100 * p.flip).toFixed(1)}</td>
+				<td class="num">{p.n_sep}</td>
+				<td class="num">{(100 * p.flip_sep).toFixed(1)}</td>
+			</tr>
+		))}
+	</tbody>
+</table>
+
+</ResearchTable>
+
+If the winner does not transfer, the alternative is to predict it. A shallow decision tree over device bandwidth, sequence length, batch and the grouped-query ratio picks the exactly-correct implementation on {pct(web.selector.accuracy)} of {n0(web.selector.n)} cells, which sounds worse than it costs: median regret against the per-cell best is {web.selector.median_regret.toFixed(3)}x, so a typical wrong pick gives up {((web.selector.median_regret - 1) * 100).toFixed(1)}% of latency. The tail is where the cost lives, at {web.selector.p95_regret.toFixed(3)}x at p95.
+
+<ResearchTable caption={`Regret against the per-cell best over ${n0(web.selector.n)} cells. Coverage is the fraction of cells on which that fixed policy can run at all, which is why no fixed prefill policy covers more than about half the grid.`}>
+
+<table>
+	<thead>
+		<tr>
+			<th>Policy</th>
+			<th class="num">Median regret (x)</th>
+			<th class="num">p95 regret (x)</th>
+			<th class="num">Coverage (%)</th>
+		</tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td><strong>Fitted selector</strong></td>
+			<td class="num">{web.selector.median_regret.toFixed(3)}</td>
+			<td class="num best">{web.selector.p95_regret.toFixed(3)}</td>
+			<td class="num best">100.0</td>
+		</tr>
+		{Object.entries(web.selector.vs_fixed).map(([policy, v]) => (
+			<tr>
+				<td>Always <code>{policy}</code></td>
+				<td class="num">{v.median.toFixed(3)}</td>
+				<td class="num">{v.p95.toFixed(3)}</td>
+				<td class="num">{(100 * v.coverage).toFixed(1)}</td>
+			</tr>
+		))}
+	</tbody>
+</table>
+
+</ResearchTable>
+
+The policies that clear the coverage filter are named in the table above rather than in this sentence, because which ones qualify changes with the device set: refitting on six GPUs replaced the prefill policies with decode ones. Over the cells it can serve, the strongest fixed policy costs a median {best.median.toFixed(3)}x with a p95 of {best.p95.toFixed(3)}x at {(100 * best.coverage).toFixed(0)}% coverage, against the selector's {web.selector.median_regret.toFixed(3)}x median and {web.selector.p95_regret.toFixed(3)}x p95 across every regime. A selector earns its complexity in the tail and across regimes, not in the median.
+
+## Deployment guidance
+
+The table reports the implementation that took the most cells per device and regime, with the count and the total so the margin is visible. It describes this grid; it does not generalise past it.
+
+<ResearchTable long caption="Most frequent winner by median latency per device and regime, with the number of cells it took. A modal winner is not a separated winner.">
+
+<table>
+	<thead>
+		<tr>
+			<th>Regime</th>
+			<th>GPU</th>
+			<th>Modal winner</th>
+			<th class="num">Cells taken</th>
+			<th class="num">Cells total</th>
+			<th>Runner-up</th>
+		</tr>
+	</thead>
+	<tbody>
+		{['prefill', 'decode'].flatMap((regime) =>
+			web.devices
+				.filter((d) => web.winners[regime] && web.winners[regime][d.gpu])
+				.map((d) => (
+					<tr>
+						<td>{regime}</td>
+						<td>{d.gpu} {d.cc}</td>
+						<td><code>{winners(regime, d.gpu)[0][0]}</code></td>
+						<td class="num">{winners(regime, d.gpu)[0][1]}</td>
+						<td class="num">{winnerTotal(regime, d.gpu)}</td>
+						<td>
+							{winners(regime, d.gpu)[1]
+								? `${winners(regime, d.gpu)[1][0]} (${winners(regime, d.gpu)[1][1]})`
+								: 'none'}
+						</td>
+					</tr>
+				))
+		)}
+	</tbody>
+</table>
+
+</ResearchTable>
+
+<Observation
+	items={[
+		`A modal winner is not an instruction. Only ${pct(web.separation.overall)} of ${n0(web.headline.cells)} cells have a winner clearing both the bootstrap CI and the ${thr}% practical threshold, so on most cells behind this table the second-place implementation is an equally defensible choice, and picking on the mode alone looks like a decision when it is closer to a coin flip.`,
+		`The decode rows in this table are not a clean device comparison: A10 and A100 decode was collected under a different commit and driver than H100 and L40. ${(100 - web.headline.probed_pct).toFixed(1)}% of cells were never dispatch-probed, so on those rows there is no evidence the intended kernel ran, and every number is scoped to torch ${web.software.torch}, CUDA ${web.software.cuda}, Triton ${web.software.triton}, flash-attn ${web.software.flash_attn} and FlashInfer ${web.software.flashinfer}. A library upgrade invalidates this ranking sooner than a hardware change does.`,
+	]}
+/>
+
+## Reproducibility
+
+All analysis on this page comes from commit `{web.devices[0].sha}` on the devices listed above ({web.devices.map((d) => `${d.gpu} ${d.cc}`).join(', ')}), under torch {web.software.torch}, CUDA {web.software.cuda}, Triton {web.software.triton}, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. The separate Hopper flash-attn interface package reports as {String(web.software.flash_attn_interface)}, and FlashAttention-3 rows exist on H100 only.
+
+Three commands regenerate every number on this page from the raw sweep, in order:
+
+```bash
+python -m akp.analysis    # separation, pairs, winners, dispatch and correctness tables
+python -m akp.figures     # static figure PDFs into site/public/figures
+python -m akp.webdata     # site/public/data/web.json, the only source this page reads
+```
+
+Nothing here is typed in by hand. Every value in the prose, the tables and the figures is read from <a href="/data/web.json">web.json</a> at build or run time, so regenerating that file regenerates the article.

@@ -1,0 +1,67 @@
+---
+import type { MarkdownHeading } from 'astro';
+import ArticleHeader from '../components/ArticleHeader.astro';
+import BaseHead from '../components/BaseHead.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import TableOfContents from '../components/TableOfContents.astro';
+
+interface Meta {
+	title: string;
+	description?: string;
+	standfirst: string;
+	author?: string;
+	date: string | Date;
+	readTime: string;
+	eyebrow?: string;
+	links?: { label: string; href: string }[];
+}
+
+interface Props extends Partial<Meta> {
+	frontmatter?: Meta;
+	headings?: MarkdownHeading[];
+}
+
+const { frontmatter, headings = [] } = Astro.props;
+// Works both as an MDX `layout:` (props arrive under `frontmatter`) and as a
+// component wrapper (props arrive directly).
+const meta = (frontmatter ?? Astro.props) as Meta;
+const {
+	title,
+	description,
+	standfirst,
+	author = 'Srivatsan Sarvesan',
+	date,
+	readTime,
+	eyebrow,
+	links,
+} = meta;
+---
+
+<html lang="en">
+	<head>
+		<BaseHead title={title} description={description ?? standfirst} />
+	</head>
+	<body>
+		<Header />
+		<main class="article-shell">
+			<article class="article-body">
+				<ArticleHeader
+					eyebrow={eyebrow}
+					title={title}
+					standfirst={standfirst}
+					author={author}
+					date={new Date(date)}
+					readTime={readTime}
+					links={links}
+				/>
+				<TableOfContents headings={headings} variant="inline" />
+				<slot />
+			</article>
+			<aside class="article-toc">
+				<TableOfContents headings={headings} variant="side" />
+			</aside>
+		</main>
+		<Footer />
+	</body>
+</html>

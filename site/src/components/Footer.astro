@@ -1,0 +1,9 @@
+---
+import { REPO_URL, SITE_AUTHOR } from '../consts';
+
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+	{year} {SITE_AUTHOR} · <a href={REPO_URL}>Source and raw results</a>
+</footer>

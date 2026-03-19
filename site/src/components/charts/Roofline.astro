@@ -1,0 +1,114 @@
+---
+// Roofline scatter: modelled arithmetic intensity against achieved throughput.
+// Colour carries the GPU, symbol carries the regime. No compute roof is drawn:
+// no peak-FLOP figure was measured on any of these parts, and the byte counts
+// are analytic, so a roof line would assert something the data does not hold.
+import web from '../../../public/data/web.json';
+
+// Device order follows the devices table so the legend reads the same way twice.
+const order = web.devices.map((d) => d.gpu);
+const points = web.roofline
+	.slice()
+	.sort((a, b) => order.indexOf(a.gpu) - order.indexOf(b.gpu));
+const gpus = order.filter((g) => points.some((p) => p.gpu === g));
+---
+
+<div class="roofline" data-points={JSON.stringify(points)} data-gpus={JSON.stringify(gpus)}>
+	<div class="roofline-plot"></div>
+	<p class="roofline-note">
+		Traffic is modelled from tensor shapes, not read from a profiler. No Nsight Compute or Nsight
+		Systems counters exist for any of these runs, so there is no measured byte count and no measured
+		peak-FLOP ceiling to draw a roof against.
+	</p>
+</div>
+
+<script>
+	import * as Plot from '@observablehq/plot';
+
+	// Device colours. Backends are not encoded in this figure, so the ink is
+	// reused as a device scale; it stays inside the page palette.
+	const GPU_COLOUR = ['#1769aa', '#7e57c2', '#2a9d8f', '#e08c3a', '#c4562a'];
+
+	for (const root of document.querySelectorAll('.roofline')) {
+		const points = JSON.parse(root.dataset.points);
+		const gpus = JSON.parse(root.dataset.gpus);
+		const slot = root.querySelector('.roofline-plot');
+		const width = Math.min(1120, slot.clientWidth || 900);
+
+		slot.replaceChildren(
+			Plot.plot({
+				width,
+				height: Math.round(width * 0.52),
+				marginLeft: 62,
+				marginBottom: 52,
+				marginRight: 16,
+				style: { background: 'transparent', fontSize: '13px' },
+				x: {
+					type: 'log',
+					label: 'Modelled arithmetic intensity (FLOP per byte, analytic traffic) →',
+					tickFormat: '~s',
+					grid: false,
+				},
+				y: {
+					type: 'log',
+					label: '↑ Achieved throughput (TFLOP/s)',
+					tickFormat: '~s',
+					grid: false,
+				},
+				color: { domain: gpus, range: GPU_COLOUR.slice(0, gpus.length), legend: true },
+				symbol: {
+					domain: ['prefill', 'decode'],
+					range: ['circle', 'diamond'],
+					legend: true,
+				},
+				marks: [
+					Plot.frame({ stroke: 'currentColor', strokeOpacity: 0.25 }),
+					Plot.dot(points, {
+						x: 'ai',
+						y: 'tflops',
+						stroke: 'gpu',
+						symbol: 'regime',
+						r: 4,
+						strokeWidth: 1.4,
+						title: (d) => `${d.impl}\n${d.gpu} · ${d.regime}\n${d.ai} FLOP/byte · ${d.tflops} TFLOP/s`,
+					}),
+				],
+			}),
+		);
+	}
+</script>
+
+<style>
+	.roofline {
+		color: var(--text-secondary);
+		font-family: var(--font-body);
+	}
+
+	.roofline :global(svg) {
+		max-width: 100%;
+		height: auto;
+		overflow: visible;
+	}
+
+	.roofline :global(text) {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.roofline :global(figure) {
+		margin: 0;
+	}
+
+	.roofline :global(.plot-swatches) {
+		font-family: var(--font-body);
+		font-size: 14px;
+		color: var(--text-primary);
+	}
+
+	.roofline-note {
+		max-width: 62ch;
+		margin: 12px 0 0;
+		font-size: 14px;
+		line-height: 1.5;
+		color: var(--text-secondary);
+	}
+</style>

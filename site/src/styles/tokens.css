@@ -1,0 +1,58 @@
+/* Design tokens. Every colour is declared on bare :root first; the dark
+   blocks only redefine tokens that already exist there. */
+
+:root {
+	--background: #ffffff;
+	--surface: #f7f8fa;
+	--text-primary: #171717;
+	--text-secondary: #5f6368;
+	--border: #dfe3e8;
+	--accent: #1769aa;
+	--accent-soft: #eaf3fa;
+	--success: #257a4a;
+	--warning: #a36500;
+	--failure: #b42318;
+
+	/* Backend identity: one colour per implementation family, identical in
+	   every chart and in both themes. Architecture is carried by panel or
+	   line style, never by a second colour scale. */
+	--backend-reference: #9e9e9e;
+	--backend-inductor: #7e57c2;
+	--backend-sdpa: #1769aa;
+	--backend-triton: #2a9d8f;
+	--backend-fa2: #e08c3a;
+	--backend-fa3: #c4562a;
+	--backend-flashinfer: #2e9e5b;
+
+	--font-heading: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-body: 'Source Sans 3', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) {
+		--background: #101214;
+		--surface: #191c1f;
+		--text-primary: #e8eaed;
+		--text-secondary: #a2a9b0;
+		--border: #2e3338;
+		--accent: #6ab4ea;
+		--accent-soft: #14293a;
+		--success: #58c08a;
+		--warning: #d9a441;
+		--failure: #e97c72;
+	}
+}
+
+:root[data-theme='dark'] {
+	--background: #101214;
+	--surface: #191c1f;
+	--text-primary: #e8eaed;
+	--text-secondary: #a2a9b0;
+	--border: #2e3338;
+	--accent: #6ab4ea;
+	--accent-soft: #14293a;
+	--success: #58c08a;
+	--warning: #d9a441;
+	--failure: #e97c72;
+}

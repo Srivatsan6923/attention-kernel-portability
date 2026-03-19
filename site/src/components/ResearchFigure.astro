@@ -1,0 +1,26 @@
+---
+interface Props {
+	id: string;
+	number: number;
+	title: string;
+	dataHref?: string;
+	downloadHref?: string;
+	wide?: boolean;
+}
+
+const { id, number, title, dataHref, downloadHref, wide = true } = Astro.props;
+---
+
+<figure class:list={['research-figure', wide && 'figure-wide']} id={id}>
+	<div class="fig-number">Figure {number}</div>
+	<div class="fig-title">{title}</div>
+	<div class="fig-chart"><slot /></div>
+	<figcaption>
+		<slot name="observations" />
+		<div class="fig-footer">
+			{downloadHref && <a href={downloadHref} download>Download SVG</a>}
+			{downloadHref && dataHref && <span> · </span>}
+			{dataHref && <a href={dataHref}>View data</a>}
+		</div>
+	</figcaption>
+</figure>
