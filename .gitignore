@@ -27,3 +27,8 @@ results_h100_unpinned/
 site/node_modules/
 site/dist/
 site/.astro/
+
+# 51 MB binary, fetched from the tectonic releases page
+paper/tectonic.exe
+paper/main.pdf
+paper/probe.*
