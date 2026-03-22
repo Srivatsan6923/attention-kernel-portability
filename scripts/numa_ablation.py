@@ -47,16 +47,20 @@ def main(argv=None):
     rows = []
     for label, path, gpu in (("unpinned", a.unpinned, None),
                              ("pinned", a.pinned, a.gpu)):
+        # cv is indexed by (implementation, shape...), so its length counts
+        # (cell, implementation) triples. The cell count is smaller and is what
+        # a sentence about "configurations" means.
         cv, timers, _ = dispersion(f"{path}/rows.parquet", gpu)
-        rows.append(dict(condition=label, n_cells=int(len(cv)),
+        rows.append(dict(condition=label, n_triples=int(len(cv)),
+                         n_cells=int(_.cell.nunique()),
                          median_cv=round(float(cv.median()), 4),
                          p95_cv=round(float(cv.quantile(0.95)), 4),
                          frac_over_25pct=round(float((cv > 0.25).mean()), 4),
                          timers=timers))
 
-    if rows[0]["n_cells"] != rows[1]["n_cells"]:
-        print("warning: %d unpinned cells vs %d pinned; the sets are not matched"
-              % (rows[0]["n_cells"], rows[1]["n_cells"]), file=sys.stderr)
+    if rows[0]["n_triples"] != rows[1]["n_triples"]:
+        print("warning: %d unpinned triples vs %d pinned; the sets are not matched"
+              % (rows[0]["n_triples"], rows[1]["n_triples"]), file=sys.stderr)
 
     out = {"cells": rows,
            "cv_reduction": round(rows[0]["median_cv"] / rows[1]["median_cv"], 2)}

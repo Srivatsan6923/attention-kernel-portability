@@ -18,6 +18,8 @@ A **cell** is one configuration key `regime|B|Hq|Hkv|D|N|dtype|mode|launch|cache
 | A10 | prefill | 7200 | 144 | 10 | 5 | 7200 | 1.000 | 144/159 = 0.906 |
 | A100 | decode | 5760 | 192 | 6 | 5 | 5760 | 1.000 | 192/244 = 0.787 |
 | A100 | prefill | 1440 | 108 | 10 | 2 | 2160 | 0.667 | 108/159 = 0.679 |
+| NVIDIA GeForce RTX 5090 | decode | 5760 | 192 | 6 | 5 | 5760 | 1.000 | 192/244 = 0.787 |
+| NVIDIA GeForce RTX 5090 | prefill | 7200 | 144 | 10 | 5 | 7200 | 1.000 | 144/159 = 0.906 |
 | H100 | decode | 7320 | 244 | 6 | 5 | 7320 | 1.000 | 244/244 = 1.000 |
 | H100 | prefill | 7950 | 159 | 10 | 5 | 7950 | 1.000 | 159/159 = 1.000 |
 | L40 | decode | 2880 | 192 | 6 | 3 | 3456 | 0.833 | 192/244 = 0.787 |
@@ -32,6 +34,8 @@ Rows surviving `usable()` -- status OK, no erratic throttle bit set, correctness
 | A10 | prefill | 916 | 144 | 9 |
 | A100 | decode | 966 | 192 | 6 |
 | A100 | prefill | 724 | 108 | 9 |
+| NVIDIA GeForce RTX 5090 | decode | 769 | 192 | 5 |
+| NVIDIA GeForce RTX 5090 | prefill | 948 | 144 | 9 |
 | H100 | decode | 1232 | 244 | 6 |
 | H100 | prefill | 1242 | 159 | 10 |
 | L40 | decode | 966 | 192 | 6 |
@@ -40,12 +44,12 @@ Rows surviving `usable()` -- status OK, no erratic throttle bit set, correctness
 
 | quantity | value | how |
 |---|---|---|
-| measured rows | 43274 | `len(rows.parquet)` |
+| measured rows | 56234 | `len(rows.parquet)` |
 | distinct cells (union of both regimes) | 403 | `rows.cell.nunique()` |
-| (GPU, cell, impl) triples attempted | 11474 | groupby on rows.parquet |
-| (GPU, cell, impl) triples usable | 8642 | `len(cells.parquet)` = 75.3% of attempted |
-| devices with measured rows | 5 | A10, A100, H100, L40, L40S |
-| compute capabilities covered | 4 | 8.0, 8.6, 8.9, 9.0 |
+| (GPU, cell, impl) triples attempted | 14066 | groupby on rows.parquet |
+| (GPU, cell, impl) triples usable | 10359 | `len(cells.parquet)` = 73.6% of attempted |
+| devices with measured rows | 6 | A10, A100, NVIDIA GeForce RTX 5090, H100, L40, L40S |
+| compute capabilities covered | 5 | 12.0, 8.0, 8.6, 8.9, 9.0 |
 | prefill implementations | 10 | P0/P1x3/P2bx1/P2c/P2d/P3/P4/P4h |
 | decode implementations | 6 | D0/D1/D2/D3/D4/D6 |
 
@@ -57,6 +61,7 @@ Rows surviving `usable()` -- status OK, no erratic throttle bit set, correctness
 |---|---|---|---|---|---|---|---|---|
 | A10 | 8.6 | 72 | 23.69 | 6 | 483.3 | 10.272 | 595.71.05 | 468b9a55 + 91959d34 |
 | A100 | 8.0 | 108 | 85.09 | 40 | 1732.8 | 9.552 | 595.71.05 | 468b9a55 + 91959d34 |
+| NVIDIA GeForce RTX 5090 | 12.0 | 170 | 33.67 | 96 | 1517.5 | 2.080 | 580.173.02 | 91959d34 |
 | H100 | 9.0 | 132 | 85.02 | 50 | 2979.7 | 5.088 | 580.126.09 | 91959d34 |
 | L40 | 8.9 | 142 | 47.67 | 96 | 644.4 | 6.624 | 595.71.05 | 91959d34 |
 | L40S | 8.9 | 142 | 47.70 | 96 | 645.3 | 7.168 | 610.43.02 | 91959d34 |
@@ -69,6 +74,7 @@ Event-timer overhead is the floor under every latency on that device. The table 
 |---|---|---|---|---|---|
 | A10 | 10.272 | 36.04 | 3.5x | 38 | 1871 |
 | A100 | 9.552 | 34.31 | 3.6x | 38 | 1690 |
+| NVIDIA GeForce RTX 5090 | 2.080 | 10.17 | 4.9x | 5 | 1717 |
 | H100 | 5.088 | 6.34 | 1.2x | 153 | 2474 |
 | L40 | 6.624 | 19.14 | 2.9x | 96 | 1932 |
 | L40S | 7.168 | 31.65 | 4.4x | 7 | 675 |
@@ -81,6 +87,7 @@ Median decode bandwidth utilisation -- effective KV traffic divided by that devi
 |---|---|---|---|
 | A10 | 4775 | 0.800 | 1.006 |
 | A100 | 4830 | 0.578 | 0.926 |
+| NVIDIA GeForce RTX 5090 | 3845 | 0.930 | 1.081 |
 | H100 | 6160 | 0.439 | 0.945 |
 | L40 | 2414 | 1.038 | 1.634 |
 
@@ -96,8 +103,8 @@ Winner = argmin median_us over the implementations that produced a usable measur
 
 | GPU set | n_gpus | regime | n_cells (shared) | winner-flip rate | top-1 stable |
 |---|---|---|---|---|---|
-| all 5 devices | 5 | prefill | 65 | 98.5% | 1.5% |
-| all 5 devices | 5 | both pooled | 65 | 98.5% | 1.5% |
+| all 5 devices | 6 | prefill | 65 | 98.5% | 1.5% |
+| all 5 devices | 6 | both pooled | 65 | 98.5% | 1.5% |
 | A10/A100/H100/L40 | 4 | prefill | 108 | 96.3% | 3.7% |
 | A10/A100/H100/L40 | 4 | decode | 191 | 75.4% | 24.6% |
 | A10/A100/H100/L40 | 4 | both pooled | 299 | 82.9% | 17.1% |
@@ -107,6 +114,9 @@ Winner = argmin median_us over the implementations that produced a usable measur
 | A10/A100 | 2 | prefill | 108 | 54.6% | 45.4% |
 | A10/A100 | 2 | decode | 191 | 41.9% | 58.1% |
 | A10/A100 | 2 | both pooled | 299 | 46.5% | 53.5% |
+| A10/NVIDIA GeForce RTX 5090 | 2 | prefill | 144 | 46.5% | 53.5% |
+| A10/NVIDIA GeForce RTX 5090 | 2 | decode | 191 | 89.0% | 11.0% |
+| A10/NVIDIA GeForce RTX 5090 | 2 | both pooled | 335 | 70.7% | 29.3% |
 | A10/H100 | 2 | prefill | 144 | 81.9% | 18.1% |
 | A10/H100 | 2 | decode | 191 | 49.7% | 50.3% |
 | A10/H100 | 2 | both pooled | 335 | 63.6% | 36.4% |
@@ -115,6 +125,9 @@ Winner = argmin median_us over the implementations that produced a usable measur
 | A10/L40 | 2 | both pooled | 335 | 43.9% | 56.1% |
 | A10/L40S | 2 | prefill | 101 | 49.5% | 50.5% |
 | A10/L40S | 2 | both pooled | 101 | 49.5% | 50.5% |
+| A100/NVIDIA GeForce RTX 5090 | 2 | prefill | 108 | 38.0% | 62.0% |
+| A100/NVIDIA GeForce RTX 5090 | 2 | decode | 192 | 71.4% | 28.6% |
+| A100/NVIDIA GeForce RTX 5090 | 2 | both pooled | 300 | 59.3% | 40.7% |
 | A100/H100 | 2 | prefill | 108 | 88.0% | 12.0% |
 | A100/H100 | 2 | decode | 192 | 26.6% | 73.4% |
 | A100/H100 | 2 | both pooled | 300 | 48.7% | 51.3% |
@@ -123,6 +136,14 @@ Winner = argmin median_us over the implementations that produced a usable measur
 | A100/L40 | 2 | both pooled | 300 | 49.7% | 50.3% |
 | A100/L40S | 2 | prefill | 65 | 67.7% | 32.3% |
 | A100/L40S | 2 | both pooled | 65 | 67.7% | 32.3% |
+| NVIDIA GeForce RTX 5090/H100 | 2 | prefill | 144 | 83.3% | 16.7% |
+| NVIDIA GeForce RTX 5090/H100 | 2 | decode | 192 | 70.3% | 29.7% |
+| NVIDIA GeForce RTX 5090/H100 | 2 | both pooled | 336 | 75.9% | 24.1% |
+| NVIDIA GeForce RTX 5090/L40 | 2 | prefill | 144 | 45.8% | 54.2% |
+| NVIDIA GeForce RTX 5090/L40 | 2 | decode | 192 | 82.8% | 17.2% |
+| NVIDIA GeForce RTX 5090/L40 | 2 | both pooled | 336 | 67.0% | 33.0% |
+| NVIDIA GeForce RTX 5090/L40S | 2 | prefill | 101 | 55.4% | 44.6% |
+| NVIDIA GeForce RTX 5090/L40S | 2 | both pooled | 101 | 55.4% | 44.6% |
 | H100/L40 | 2 | prefill | 144 | 86.8% | 13.2% |
 | H100/L40 | 2 | decode | 192 | 63.5% | 36.5% |
 | H100/L40 | 2 | both pooled | 336 | 73.5% | 26.5% |
@@ -147,12 +168,17 @@ Spearman/Kendall: within each shared cell, rank the implementations both devices
 | pair | shared cells | cells with >=3 common impls | Spearman (median) | Kendall (median) | impl pairs examined | practical inv. | practical rate | statistical inv. | statistical rate |
 |---|---|---|---|---|---|---|---|---|---|
 | A10 vs A100 | 299 | 297 | 0.893 | 0.778 | 3857 | 143 | 3.71% | 384 | 9.96% |
+| A10 vs NVIDIA GeForce RTX 5090 | 335 | 333 | 0.800 | 0.667 | 3686 | 115 | 3.12% | 470 | 12.75% |
 | A10 vs H100 | 335 | 333 | 0.800 | 0.600 | 4448 | 267 | 6.00% | 507 | 11.40% |
 | A10 vs L40 | 335 | 333 | 0.893 | 0.800 | 4448 | 78 | 1.75% | 430 | 9.67% |
 | A10 vs L40S | 101 | 101 | 0.857 | 0.714 | 1733 | 124 | 7.16% | 180 | 10.39% |
+| A100 vs NVIDIA GeForce RTX 5090 | 300 | 298 | 0.900 | 0.810 | 3203 | 144 | 4.50% | 308 | 9.62% |
 | A100 vs H100 | 300 | 300 | 0.900 | 0.800 | 4054 | 325 | 8.02% | 357 | 8.81% |
 | A100 vs L40 | 300 | 300 | 0.786 | 0.714 | 4054 | 134 | 3.31% | 504 | 12.43% |
 | A100 vs L40S | 65 | 65 | 0.857 | 0.714 | 1252 | 113 | 9.03% | 156 | 12.46% |
+| NVIDIA GeForce RTX 5090 vs H100 | 336 | 334 | 0.800 | 0.667 | 3864 | 289 | 7.48% | 523 | 13.54% |
+| NVIDIA GeForce RTX 5090 vs L40 | 336 | 334 | 0.800 | 0.667 | 3864 | 99 | 2.56% | 500 | 12.94% |
+| NVIDIA GeForce RTX 5090 vs L40S | 101 | 101 | 0.786 | 0.619 | 1866 | 140 | 7.50% | 235 | 12.59% |
 | H100 vs L40 | 336 | 336 | 0.707 | 0.600 | 4755 | 224 | 4.71% | 700 | 14.72% |
 | H100 vs L40S | 101 | 101 | 0.857 | 0.714 | 1953 | 86 | 4.40% | 158 | 8.09% |
 | L40 vs L40S | 101 | 101 | 0.929 | 0.810 | 1953 | 59 | 3.02% | 110 | 5.63% |
@@ -165,7 +191,7 @@ L40 and L40S are both sm89, 142 SMs, 96 MiB L2, with measured bandwidth 644.4 an
 
 Both devices ran **prefill only**, so this floor is calibrated for prefill and is not established for decode.
 
-Pairs at or below the floor: A10 vs L40 (1.75%). Those are not usable as portability evidence.
+Pairs at or below the floor: A10 vs L40 (1.75%), NVIDIA GeForce RTX 5090 vs L40 (2.56%). Those are not usable as portability evidence.
 
 `inversions.parquet` stores `pairs_examined` as a running counter written only onto inverting pairs, so its maximum undercounts the true denominator slightly. The denominators above are recomputed exactly from `cells.parquet`; they differ from the stored maxima by at most 5 pairs (<0.40%), which moves no rate in the third decimal.
 
@@ -173,26 +199,26 @@ Pairs at or below the floor: A10 vs L40 (1.75%). Those are not usable as portabi
 
 ### Prefill: wins per implementation, over all cells that device ran
 
-| implementation | A10 | A100 | H100 | L40 | L40S |
-|---|---|---|---|---|---|
-| P2b-sdpa-mem-eff | 10 | 9 | 2 | 9 | 1 |
-| P2c-sdpa-flash | 23 | 31 | 0 | 37 | 12 |
-| P2d-sdpa-cudnn | 44 | 13 | 76 | 24 | 48 |
-| P3-triton | 24 | 0 | 0 | 24 | 17 |
-| P4-fa2 | 43 | 55 | 0 | 50 | 23 |
-| P4h-fa3 | 0 | 0 | 81 | 0 | 0 |
-| **n_cells** | **144** | **108** | **159** | **144** | **101** |
+| implementation | A10 | A100 | NVIDIA GeForce RTX 5090 | H100 | L40 | L40S |
+|---|---|---|---|---|---|---|
+| P2b-sdpa-mem-eff | 10 | 9 | 2 | 2 | 9 | 1 |
+| P2c-sdpa-flash | 23 | 31 | 22 | 0 | 37 | 12 |
+| P2d-sdpa-cudnn | 44 | 13 | 46 | 76 | 24 | 48 |
+| P3-triton | 24 | 0 | 2 | 0 | 24 | 17 |
+| P4-fa2 | 43 | 55 | 72 | 0 | 50 | 23 |
+| P4h-fa3 | 0 | 0 | 0 | 81 | 0 | 0 |
+| **n_cells** | **144** | **108** | **144** | **159** | **144** | **101** |
 
 ### Decode: wins per implementation, over all cells that device ran
 
-| implementation | A10 | A100 | H100 | L40 |
-|---|---|---|---|---|
-| D0-naive-kv | 22 | 0 | 1 | 5 |
-| D2-sdpa | 21 | 0 | 5 | 73 |
-| D3-fa-kvcache | 20 | 59 | 78 | 27 |
-| D4-flashinfer | 128 | 133 | 131 | 87 |
-| D6-fa-prefill-at-1 | 0 | 0 | 29 | 0 |
-| **n_cells** | **191** | **192** | **244** | **192** |
+| implementation | A10 | A100 | NVIDIA GeForce RTX 5090 | H100 | L40 |
+|---|---|---|---|---|---|
+| D0-naive-kv | 22 | 0 | 38 | 1 | 5 |
+| D2-sdpa | 21 | 0 | 17 | 5 | 73 |
+| D3-fa-kvcache | 20 | 59 | 137 | 78 | 27 |
+| D4-flashinfer | 128 | 133 | 0 | 131 | 87 |
+| D6-fa-prefill-at-1 | 0 | 0 | 0 | 29 | 0 |
+| **n_cells** | **191** | **192** | **192** | **244** | **192** |
 
 Columns are **not matched**: each device ran a different number of cells. For a like-for-like statement use the matched subset below.
 
@@ -225,8 +251,8 @@ Spread = `max(median_us) / min(median_us)` over the implementations that produce
 
 | regime | n (device,cell) pairs | median spread | p90 | p95 | max |
 |---|---|---|---|---|---|
-| decode | 819 | 3.26x | 4.7x | 6.0x | 17.4x |
-| prefill | 656 | 11.00x | 33.7x | 42.3x | 80.9x |
+| decode | 1011 | 3.10x | 4.6x | 5.4x | 17.4x |
+| prefill | 800 | 10.63x | 32.8x | 41.4x | 80.9x |
 
 | GPU | regime | n cells | median spread | p95 | max | median impls per cell |
 |---|---|---|---|---|---|---|
@@ -234,20 +260,22 @@ Spread = `max(median_us) / min(median_us)` over the implementations that produce
 | A10 | prefill | 144 | 6.83x | 28.1x | 34.9x | 7.0 |
 | A100 | decode | 192 | 3.40x | 5.6x | 16.1x | 5.0 |
 | A100 | prefill | 108 | 11.12x | 47.0x | 51.9x | 7.0 |
+| NVIDIA GeForce RTX 5090 | decode | 192 | 2.10x | 4.5x | 5.7x | 4.0 |
+| NVIDIA GeForce RTX 5090 | prefill | 144 | 7.82x | 30.2x | 39.6x | 7.0 |
 | H100 | decode | 244 | 3.01x | 4.9x | 15.7x | 5.0 |
 | H100 | prefill | 159 | 11.65x | 40.8x | 59.6x | 8.0 |
 | L40 | decode | 192 | 3.76x | 10.6x | 17.4x | 5.0 |
 | L40 | prefill | 144 | 13.36x | 40.9x | 55.5x | 7.0 |
 | L40S | prefill | 101 | 15.49x | 55.5x | 80.9x | 7.0 |
 
-Safe headline: **prefill spread is a median 11.0x, decode 3.26x** (n=656 and n=819 device-cell pairs). Read it as 'the choice of implementation matters roughly 3.4x more in prefill than in decode', not as one kernel being 11x faster than another everywhere.
+Safe headline: **prefill spread is a median 10.6x, decode 3.10x** (n=800 and n=1011 device-cell pairs). Read it as 'the choice of implementation matters roughly 3.4x more in prefill than in decode', not as one kernel being 11x faster than another everywhere.
 
 Absolute anchors, so no spread is ever quoted as a bare ratio:
 
 | regime | n triples | fastest | p25 | median | p75 | slowest |
 |---|---|---|---|---|---|---|
-| prefill | 4523 | 31.3 us | 410.3 us | 1738.6 us | 8956.1 us | 8.08 s |
-| decode | 4119 | 6.3 us | 100.8 us | 284.2 us | 959.6 us | 43304.3 us |
+| prefill | 5471 | 14.8 us | 358.0 us | 1603.8 us | 8690.0 us | 8.08 s |
+| decode | 4888 | 6.3 us | 91.0 us | 271.1 us | 906.3 us | 43304.3 us |
 
 The prefill tail is the `fwd_bwd` end of the grid, not the naive kernel: the slowest usable measurement in the dataset is **P3-triton on A100 at 8.08 s** (`prefill|B16|Hq32|Hkv32|D128|N8192|bf16|fwd_bwd|eager|warm|c1`). Quote a spread beside the pair of latencies it came from, never on its own.
 
@@ -257,10 +285,10 @@ These are **kinds of outcome, not severities**. A row is exactly one of them and
 
 | status | meaning | written when | n rows | share |
 |---|---|---|---|---|
-| OK | The cell was built, ran, passed the correctness gate for its equivalence class, and was timed. **Only these rows enter any ranking.** | the measurement completed | 33282 | 76.9% |
-| UNSUPPORTED | The implementation declined this (config, device). Either the kernel does not exist for this compute capability or shape, **or** the config lies outside the strip this implementation is deliberately run on. Not a failure and not a crash. | `impl.supports()` false, `impl_applies()` false, `NotImplementedError`, or a `RuntimeError` naming 'No available kernel' / 'not supported' | 9017 | 20.8% |
-| OOM_PREDICTED | The allocation was computed in advance to exceed the device and the cell was **refused, never attempted**. No timing exists and no OOM was provoked. | `oom_predicted_bytes()` returned non-zero | 916 | 2.1% |
-| OOM | The cell **was** attempted and the allocator raised `torch.cuda.OutOfMemoryError`. The predictor missed it. | caught at run time | 59 | 0.1% |
+| OK | The cell was built, ran, passed the correctness gate for its equivalence class, and was timed. **Only these rows enter any ranking.** | the measurement completed | 41865 | 74.4% |
+| UNSUPPORTED | The implementation declined this (config, device). Either the kernel does not exist for this compute capability or shape, **or** the config lies outside the strip this implementation is deliberately run on. Not a failure and not a crash. | `impl.supports()` false, `impl_applies()` false, `NotImplementedError`, or a `RuntimeError` naming 'No available kernel' / 'not supported' | 12077 | 21.5% |
+| OOM_PREDICTED | The allocation was computed in advance to exceed the device and the cell was **refused, never attempted**. No timing exists and no OOM was provoked. | `oom_predicted_bytes()` returned non-zero | 1196 | 2.1% |
+| OOM | The cell **was** attempted and the allocator raised `torch.cuda.OutOfMemoryError`. The predictor missed it. | caught at run time | 146 | 0.3% |
 
 `NUMERICAL_FAIL` and `ERROR` are defined in `akp/run.py` but **occur zero times** in this dataset. Every implementation that ran, ran correctly.
 
@@ -268,60 +296,60 @@ These are **kinds of outcome, not severities**. A row is exactly one of them and
 
 | kind | n rows | share of UNSUPPORTED | which |
 |---|---|---|---|
-| outside the deliberate strip (a sampling decision, not a capability limit) | 7626 | 84.6% | `D1-inductor`, `P1-inductor-nofuse`, `P1-inductor-where` are run only on a narrow slice of the grid; every other config is recorded UNSUPPORTED by `impl_applies()` |
-| genuine capability gap | 1391 | 15.4% | P4h-fa3 off sm90 (1361 rows, every non-H100 device) and P2b-sdpa-mem-eff on H100 (30 rows, all carrying 'RuntimeError: No available kernel') |
+| outside the deliberate strip (a sampling decision, not a capability limit) | 9966 | 82.5% | `D1-inductor`, `P1-inductor-nofuse`, `P1-inductor-where` are run only on a narrow slice of the grid; every other config is recorded UNSUPPORTED by `impl_applies()` |
+| genuine capability gap | 2111 | 17.5% | P4h-fa3 off sm90 (2081 rows, every non-H100 device) and P2b-sdpa-mem-eff on H100 (30 rows, all carrying 'RuntimeError: No available kernel') |
 
 Per implementation per device, as `OK / UNSUPPORTED / OOM_PREDICTED / OOM`. A dash means the device never attempted that implementation (the decode implementations on L40S, which ran prefill only).
 
-| implementation | A10 | A100 | H100 | L40 | L40S |
-|---|---|---|---|---|---|
-| D0-naive-kv | 955 / 0 / 0 / 5 | 960 / 0 / 0 / 0 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
-| D1-inductor *(strip)* | 30 / 930 / 0 / 0 | 30 / 930 / 0 / 0 | 60 / 1160 / 0 / 0 | 14 / 466 / 0 / 0 | -- |
-| D2-sdpa | 955 / 0 / 0 / 5 | 960 / 0 / 0 / 0 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
-| D3-fa-kvcache | 945 / 0 / 0 / 15 | 960 / 0 / 0 / 0 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
-| D4-flashinfer | 945 / 0 / 0 / 15 | 960 / 0 / 0 / 0 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
-| D6-fa-prefill-at-1 | 945 / 0 / 0 / 15 | 960 / 0 / 0 / 0 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
-| P0-naive | 480 / 0 / 240 / 0 | 123 / 0 / 21 / 0 | 675 / 0 / 120 / 0 | 271 / 0 / 50 / 3 | 150 / 0 / 22 / 1 |
-| P1-inductor | 480 / 0 / 240 / 0 | 123 / 0 / 21 / 0 | 675 / 0 / 120 / 0 | 274 / 0 / 50 / 0 | 150 / 0 / 22 / 0 |
-| P1-inductor-nofuse *(strip)* | 10 / 705 / 5 / 0 | 3 / 141 / 0 / 0 | 60 / 735 / 0 / 0 | 6 / 318 / 0 / 0 | 1 / 171 / 0 / 0 |
-| P1-inductor-where *(strip)* | 10 / 705 / 5 / 0 | 3 / 141 / 0 / 0 | 60 / 735 / 0 / 0 | 6 / 318 / 0 / 0 | 1 / 171 / 0 / 0 |
-| P2b-sdpa-mem-eff | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 765 / 30 / 0 / 0 | 324 / 0 / 0 / 0 | 172 / 0 / 0 / 0 |
-| P2c-sdpa-flash | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 795 / 0 / 0 / 0 | 324 / 0 / 0 / 0 | 173 / 0 / 0 / 0 |
-| P2d-sdpa-cudnn | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 795 / 0 / 0 / 0 | 324 / 0 / 0 / 0 | 173 / 0 / 0 / 0 |
-| P3-triton | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 795 / 0 / 0 / 0 | 324 / 0 / 0 / 0 | 172 / 0 / 0 / 0 |
-| P4-fa2 | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 795 / 0 / 0 / 0 | 324 / 0 / 0 / 0 | 172 / 0 / 0 / 0 |
-| P4h-fa3 | 0 / 720 / 0 / 0 | 0 / 144 / 0 / 0 | 795 / 0 / 0 / 0 | 0 / 324 / 0 / 0 | 0 / 173 / 0 / 0 |
+| implementation | A10 | A100 | NVIDIA GeForce RTX 5090 | H100 | L40 | L40S |
+|---|---|---|---|---|---|---|
+| D0-naive-kv | 955 / 0 / 0 / 5 | 960 / 0 / 0 / 0 | 955 / 0 / 0 / 5 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
+| D1-inductor *(strip)* | 30 / 930 / 0 / 0 | 30 / 930 / 0 / 0 | 30 / 930 / 0 / 0 | 60 / 1160 / 0 / 0 | 14 / 466 / 0 / 0 | -- |
+| D2-sdpa | 955 / 0 / 0 / 5 | 960 / 0 / 0 / 0 | 960 / 0 / 0 / 0 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
+| D3-fa-kvcache | 945 / 0 / 0 / 15 | 960 / 0 / 0 / 0 | 950 / 0 / 0 / 10 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
+| D4-flashinfer | 945 / 0 / 0 / 15 | 960 / 0 / 0 / 0 | 0 / 0 / 0 / 10 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
+| D6-fa-prefill-at-1 | 945 / 0 / 0 / 15 | 960 / 0 / 0 / 0 | 950 / 0 / 0 / 10 | 1220 / 0 / 0 / 0 | 480 / 0 / 0 / 0 | -- |
+| P0-naive | 480 / 0 / 240 / 0 | 123 / 0 / 21 / 0 | 528 / 0 / 140 / 52 | 675 / 0 / 120 / 0 | 271 / 0 / 50 / 3 | 150 / 0 / 22 / 1 |
+| P1-inductor | 480 / 0 / 240 / 0 | 123 / 0 / 21 / 0 | 580 / 0 / 140 / 0 | 675 / 0 / 120 / 0 | 274 / 0 / 50 / 0 | 150 / 0 / 22 / 0 |
+| P1-inductor-nofuse *(strip)* | 10 / 705 / 5 / 0 | 3 / 141 / 0 / 0 | 15 / 705 / 0 / 0 | 60 / 735 / 0 / 0 | 6 / 318 / 0 / 0 | 1 / 171 / 0 / 0 |
+| P1-inductor-where *(strip)* | 10 / 705 / 5 / 0 | 3 / 141 / 0 / 0 | 15 / 705 / 0 / 0 | 60 / 735 / 0 / 0 | 6 / 318 / 0 / 0 | 1 / 171 / 0 / 0 |
+| P2b-sdpa-mem-eff | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 720 / 0 / 0 / 0 | 765 / 30 / 0 / 0 | 324 / 0 / 0 / 0 | 172 / 0 / 0 / 0 |
+| P2c-sdpa-flash | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 720 / 0 / 0 / 0 | 795 / 0 / 0 / 0 | 324 / 0 / 0 / 0 | 173 / 0 / 0 / 0 |
+| P2d-sdpa-cudnn | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 720 / 0 / 0 / 0 | 795 / 0 / 0 / 0 | 324 / 0 / 0 / 0 | 173 / 0 / 0 / 0 |
+| P3-triton | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 720 / 0 / 0 / 0 | 795 / 0 / 0 / 0 | 324 / 0 / 0 / 0 | 172 / 0 / 0 / 0 |
+| P4-fa2 | 720 / 0 / 0 / 0 | 144 / 0 / 0 / 0 | 720 / 0 / 0 / 0 | 795 / 0 / 0 / 0 | 324 / 0 / 0 / 0 | 172 / 0 / 0 / 0 |
+| P4h-fa3 | 0 / 720 / 0 / 0 | 0 / 144 / 0 / 0 | 0 / 720 / 0 / 0 | 795 / 0 / 0 / 0 | 0 / 324 / 0 / 0 | 0 / 173 / 0 / 0 |
 
-**OOM_PREDICTED is a refusal, so the predictor has no ground truth on the cells it refused.** Recomputing the same prediction on the score-matrix cells that did run gives predicted/actual peak memory of **1.61** median on `fwd` (n=1939) and **0.91** on `fwd_bwd` (n=1622). The predictor models the forward score matrix only, so it under-predicts `fwd_bwd` by construction. 916 cells were refused and carry no actual; 59 cells OOMed anyway despite passing the predictor.
+**OOM_PREDICTED is a refusal, so the predictor has no ground truth on the cells it refused.** Recomputing the same prediction on the score-matrix cells that did run gives predicted/actual peak memory of **1.61** median on `fwd` (n=2547) and **0.91** on `fwd_bwd` (n=2152). The predictor models the forward score matrix only, so it under-predicts `fwd_bwd` by construction. 1196 cells were refused and carry no actual; 146 cells OOMed anyway despite passing the predictor.
 
-The 59 OOM rows are: D0-naive-kv on A10 (5); D2-sdpa on A10 (5); D3-fa-kvcache on A10 (15); D4-flashinfer on A10 (15); D6-fa-prefill-at-1 on A10 (15); P0-naive on L40 (3); P0-naive on L40S (1). All of them are cells the predictor let through.
+The 146 OOM rows are: D0-naive-kv on A10 (5); D0-naive-kv on NVIDIA GeForce RTX 5090 (5); D2-sdpa on A10 (5); D3-fa-kvcache on A10 (15); D3-fa-kvcache on NVIDIA GeForce RTX 5090 (10); D4-flashinfer on A10 (15); D4-flashinfer on NVIDIA GeForce RTX 5090 (10); D6-fa-prefill-at-1 on A10 (15); D6-fa-prefill-at-1 on NVIDIA GeForce RTX 5090 (10); P0-naive on NVIDIA GeForce RTX 5090 (52); P0-naive on L40 (3); P0-naive on L40S (1). All of them are cells the predictor let through.
 
 ## 8. Dispatch audit
 
 | quantity | value | how |
 |---|---|---|
-| audited rows | 33282 | every `status == OK` row |
-| rows with a readable kernel trace (probed) | 21033 (63.2%) | a non-empty trace not starting with `<` |
-| probe failures (unprobed) | 12249 | no trace captured; counted as unknown, **never** as a mismatch |
-| dispatch classes | 519 | (impl, GPU, head_dim, dtype, gqa, mode, launch) -- the unit a dispatch answer is actually about, since the launched kernel is not a function of batch or length |
-| classes with >=1 probed row | 505 (97.30%) | **probe coverage** |
-| **mismatch rate among probed rows** | **0.552%** (116 of 21033) | requested kernel family absent from the trace |
-| mismatch rate over all audited rows | 0.349% (116 of 33282) | same numerator, larger denominator -- **state which you mean** |
+| audited rows | 41865 | every `status == OK` row |
+| rows with a readable kernel trace (probed) | 25541 (61.0%) | a non-empty trace not starting with `<` |
+| probe failures (unprobed) | 16324 | no trace captured; counted as unknown, **never** as a mismatch |
+| dispatch classes | 610 | (impl, GPU, head_dim, dtype, gqa, mode, launch) -- the unit a dispatch answer is actually about, since the launched kernel is not a function of batch or length |
+| classes with >=1 probed row | 575 (94.26%) | **probe coverage** |
+| **mismatch rate among probed rows** | **0.560%** (143 of 25541) | requested kernel family absent from the trace |
+| mismatch rate over all audited rows | 0.342% (143 of 41865) | same numerator, larger denominator -- **state which you mean** |
 
-Mismatches concentrate rather than spreading across the stack: D0-naive-kv on A10 (11); D0-naive-kv on A100 (2); P0-naive on H100 (7); P1-inductor on A100 (2); P1-inductor on H100 (4); P1-inductor on L40 (7); P1-inductor on L40S (1); P2b-sdpa-mem-eff on A10 (4); P2b-sdpa-mem-eff on A100 (5); P2b-sdpa-mem-eff on H100 (66); P2b-sdpa-mem-eff on L40 (5); P2b-sdpa-mem-eff on L40S (2).
+Mismatches concentrate rather than spreading across the stack: D0-naive-kv on A10 (11); D0-naive-kv on A100 (2); P0-naive on H100 (7); P1-inductor on A100 (2); P1-inductor on NVIDIA GeForce RTX 5090 (16); P1-inductor on H100 (4); P1-inductor on L40 (7); P1-inductor on L40S (1); P2b-sdpa-mem-eff on A10 (4); P2b-sdpa-mem-eff on A100 (5); P2b-sdpa-mem-eff on NVIDIA GeForce RTX 5090 (11); P2b-sdpa-mem-eff on H100 (66); P2b-sdpa-mem-eff on L40 (5); P2b-sdpa-mem-eff on L40S (2).
 
 ### TorchInductor's `fuse_attention` counter
 
 | quantity | value |
 |---|---|
-| inductor rows in the dataset (P1-*, D1-*) | 10085 |
-| inductor rows that ran and captured the counter | 1996 |
+| inductor rows in the dataset (P1-*, D1-*) | 13205 |
+| inductor rows that ran and captured the counter | 2636 |
 | of those, `fuse_attention > 0` | 0 |
 | maximum value observed anywhere | 0 |
-| devices covered | 5 (A10, A100, H100, L40, L40S) |
+| devices covered | 6 (A10, A100, NVIDIA GeForce RTX 5090, H100, L40, L40S) |
 | `fused_into_sdpa` true in `dispatch_audit` | 0 |
 
-**Safe claim:** on all 1996 inductor rows that captured the counter, across all 5 devices, `fuse_attention` is 0. `torch.compile` never fired its attention-fusion pattern on this naive attention source under this software-distribution snapshot.
+**Safe claim:** on all 2636 inductor rows that captured the counter, across all 6 devices, `fuse_attention` is 0. `torch.compile` never fired its attention-fusion pattern on this naive attention source under this software-distribution snapshot.
 
 **The counter is not the whole story, and the stronger claim does not hold.** 45 probed inductor rows *do* carry a flash kernel in their trace (`attn_kernel_in_trace`), all on H100, all in P1-inductor and P1-inductor-where, over 6 distinct cells. Separately, 30 P1-inductor and 15 P1-inductor-where probed rows report an observed backend of `pytorch-flash` rather than `triton`. The honest wording is **'Inductor's own fusion counter never fired'**, not 'no SDPA kernel ever appeared in a compiled path'.
 
@@ -329,57 +357,56 @@ Observed backend per implementation, probed rows only. This is what actually ran
 
 | implementation | observed backends (n probed rows) |
 |---|---|
-| D0-naive-kv | `unfused-gemm` 3594, `unknown` 21 |
-| D1-inductor | `triton` 127 |
-| D2-sdpa | `pytorch-flash` 2605 |
-| D3-fa-kvcache | `flash-attn` 2606 |
+| D0-naive-kv | `unfused-gemm` 4549, `unknown` 21 |
+| D1-inductor | `triton` 157 |
+| D2-sdpa | `pytorch-flash` 3565 |
+| D3-fa-kvcache | `flash-attn` 3556 |
 | D4-flashinfer | `flashinfer` 2529 |
-| D6-fa-prefill-at-1 | `flash-attn` 2621 |
-| P0-naive | `unfused-gemm` 1447, `unknown` 34 |
-| P1-inductor | `triton` 1017, `pytorch-flash` 30, `unknown` 14 |
+| D6-fa-prefill-at-1 | `flash-attn` 3571 |
+| P0-naive | `unfused-gemm` 1784, `unknown` 43 |
+| P1-inductor | `triton` 1154, `pytorch-flash` 30, `unknown` 30, `unfused-gemm` 2 |
 | P1-inductor-nofuse | `triton` 68 |
 | P1-inductor-where | `triton` 52, `pytorch-flash` 15 |
-| P2b-sdpa-mem-eff | `cutlass-fmha` 789, `unknown` 82 |
-| P2c-sdpa-flash | `pytorch-flash` 845 |
-| P2d-sdpa-cudnn | `cudnn` 1084 |
-| P3-triton | `triton` 835 |
-| P4-fa2 | `flash-attn` 380 |
+| P2b-sdpa-mem-eff | `cutlass-fmha` 827, `unknown` 93 |
+| P2c-sdpa-flash | `pytorch-flash` 887 |
+| P2d-sdpa-cudnn | `cudnn` 1125 |
+| P3-triton | `triton` 850 |
+| P4-fa2 | `flash-attn` 395 |
 | P4h-fa3 | `flash-attn` 238 |
 
 ## 9. Hardware-aware selector
 
-A depth-4 decision tree over (cc, measured bandwidth, is_decode, log2 N, log2 B, head_dim, GQA ratio, is_bf16), **fit on A100 + H100 and tested on the devices it never saw** (A10, L40, L40S). The split is by hardware, not a random split of one grid, because the question is whether the rule transfers to an unseen GPU.
+A depth-4 decision tree over (cc, measured bandwidth, is_decode, log2 N, log2 B, head_dim, GQA ratio, is_bf16), **fit on A100 + H100 and tested on the devices it never saw** (A10, NVIDIA GeForce RTX 5090, L40, L40S). The split is by hardware, not a random split of one grid, because the question is whether the rule transfers to an unseen GPU.
 
 **Lead with regret, not accuracy.** Accuracy asks whether the tree names the exact winner; regret asks what it costs when it does not. Several implementations sit within noise of each other in most cells, so accuracy understates the rule badly.
 
 | quantity | value | n |
 |---|---|---|
-| **median regret** (selector latency / oracle latency) | **1.0227** -- 2.3% slower than a per-cell oracle | 772 |
-| **p95 regret** | **1.388** | 772 |
-| oracle median latency | 661.1 us | 772 |
-| selector median latency | 750.6 us | 772 (2 cells have no latency for the predicted impl) |
-| top-1 accuracy | 38.9% | 772 |
+| **median regret** (selector latency / oracle latency) | **1.0132** -- 1.3% slower than a per-cell oracle | 1108 |
+| **p95 regret** | **1.337** | 1108 |
+| oracle median latency | 561.4 us | 1108 |
+| selector median latency | 582.9 us | 1108 (122 cells have no latency for the predicted impl) |
+| top-1 accuracy | 39.0% | 1108 |
 | fit cells | 703 | A100, H100 |
-| held-out cells | 772 | A10, L40, L40S |
+| held-out cells | 1108 | A10, NVIDIA GeForce RTX 5090, L40, L40S |
 
 Per regime, on the held-out devices:
 
 | regime | n cells | oracle median | selector median | median regret | p95 regret | top-1 accuracy |
 |---|---|---|---|---|---|---|
-| prefill | 389 | 1384.0 us | 1517.3 us | 1.0672 | 1.490 | 32.4% |
-| decode | 383 | 383.2 us | 391.7 us | 1.0065 | 1.234 | 45.4% |
+| prefill | 533 | 1131.2 us | 1270.2 us | 1.0493 | 1.431 | 35.6% |
+| decode | 575 | 308.3 us | 219.3 us | 1.0000 | 1.221 | 42.1% |
 
-Against standing on one fixed implementation everywhere. **Every surviving policy is a prefill kernel**: the analysis drops any policy covering less than half the held-out cells, and the decode implementations reach only 49.6%, so all of them were dropped. **This table is a prefill-only comparison and must be labelled as such.**
+Against standing on one fixed implementation everywhere. **Every surviving policy is a prefill kernel**: the analysis drops any policy covering less than half the held-out cells, and the decode implementations reach only 51.9%, so all of them were dropped. **This table is a prefill-only comparison and must be labelled as such.**
 
 | fixed policy | coverage of held-out cells | n cells | fixed median latency | selector median latency on those cells | median speedup | p95 speedup |
 |---|---|---|---|---|---|---|
-| P2b-sdpa-mem-eff | 50.3% | 388 | 2732.8 us | 1521.0 us | 1.425x | 3.944x |
-| P3-triton | 50.3% | 388 | 1737.0 us | 1521.0 us | 1.249x | 3.328x |
-| P2c-sdpa-flash | 50.4% | 389 | 1430.9 us | 1517.3 us | 1.000x | 1.035x |
-| P4-fa2 | 50.3% | 388 | 1583.5 us | 1521.0 us | 1.000x | 1.519x |
-| P2d-sdpa-cudnn | 50.4% | 389 | 1487.3 us | 1517.3 us | 0.996x | 1.102x |
+| D0-naive-kv | 51.8% | 574 | 599.8 us | 219.3 us | 2.953x | 5.557x |
+| D6-fa-prefill-at-1 | 51.5% | 571 | 351.8 us | 219.3 us | 1.249x | 3.124x |
+| D2-sdpa | 51.9% | 575 | 308.6 us | 219.3 us | 1.053x | 1.373x |
+| D3-fa-kvcache | 51.5% | 571 | 314.5 us | 219.3 us | 1.000x | 1.336x |
 
-Read honestly: against the strongest fixed prefill policies the selector is a **wash at the median** (P2c-sdpa-flash 1.000x, P4-fa2 1.000x, P2d-sdpa-cudnn 0.996x) and wins only in the tail. Its value is against the weak fixed policies and in never being catastrophically wrong. Never quote the largest speedup without naming the policy it beats and the absolute latencies on both sides.
+Read honestly: against the strongest fixed prefill policies the selector is a **wash at the median** (D3-fa-kvcache 1.000x) and wins only in the tail. Its value is against the weak fixed policies and in never being catastrophically wrong. Never quote the largest speedup without naming the policy it beats and the absolute latencies on both sides.
 
 Learned rule, verbatim, for the appendix:
 
@@ -442,6 +469,8 @@ The unit of variation is the **per-process median**, not the individual rep: rep
 | A10 | prefill | 916 | 916 | 5 | 0.0125 | 0.0932 | 0.0096 | 0.0718 |
 | A100 | decode | 966 | 966 | 5 | 0.0511 | 0.3066 | 0.0397 | 0.2584 |
 | A100 | prefill | 724 | 248 | 1 | 0.0378 | 0.2357 | 0.0000 | 0.1129 |
+| NVIDIA GeForce RTX 5090 | decode | 769 | 769 | 5 | 0.0021 | 0.0268 | 0.0016 | 0.0207 |
+| NVIDIA GeForce RTX 5090 | prefill | 948 | 948 | 5 | 0.0032 | 0.1302 | 0.0025 | 0.0911 |
 | H100 | decode | 1232 | 1232 | 5 | 0.0231 | 0.3881 | 0.0178 | 0.2756 |
 | H100 | prefill | 1242 | 1242 | 5 | 0.0319 | 0.4915 | 0.0244 | 0.4251 |
 | L40 | decode | 966 | 966 | 2 | 0.0020 | 0.0290 | 0.0017 | 0.0259 |
@@ -452,11 +481,12 @@ The unit of variation is the **per-process median**, not the individual rep: rep
 |---|---|---|---|---|---|---|
 | A10 | 1871 | 1871 | 0.0109 | 0.0699 | 0.0082 | 0.0530 |
 | A100 | 1690 | 1214 | 0.0499 | 0.2940 | 0.0198 | 0.2011 |
+| NVIDIA GeForce RTX 5090 | 1717 | 1717 | 0.0026 | 0.0525 | 0.0020 | 0.0389 |
 | H100 | 2474 | 2474 | 0.0260 | 0.4612 | 0.0195 | 0.3474 |
 | L40 | 1932 | 1931 | 0.0038 | 0.0550 | 0.0030 | 0.0409 |
 | L40S | 675 | 489 | 0.0151 | 0.2281 | 0.0038 | 0.1354 |
 
-**663 of 8642 usable triples have a single process repeat**, so they have no CV at all and a bootstrap CI of width 0. They are 476 on A100 prefill, 186 on L40S prefill and 1 on L40 prefill. Any A100-prefill or L40S CI figure is dominated by these and is an artefact, not a precision measurement.
+**663 of 10359 usable triples have a single process repeat**, so they have no CV at all and a bootstrap CI of width 0. They are 476 on A100 prefill, 186 on L40S prefill and 1 on L40 prefill. Any A100-prefill or L40S CI figure is dominated by these and is an artefact, not a precision measurement.
 
 Safe headline, restricted to the device-regimes that genuinely have 5 process repeats: between-process CV is a median **0.0109** on A10 (n=1871 triples), **0.0511** on A100 decode (n=966) and **0.0260** on H100 (n=2474).
 
@@ -468,13 +498,13 @@ H100 is the noisiest device in the set at the tail -- p95 CV **0.461** and p95 r
 
 | claim as carried in the notes | status against `results/processed/` |
 |---|---|
-| RTX 5090 / sm120 as a fifth compute-capability target | **No sm120 rows exist.** `rows.parquet` holds 5 devices: A10 (8.6), A100 (8.0), H100 (9.0), L40 (8.9), L40S (8.9) -- 4 compute capabilities across 3 architecture families (Ampere, Ada, Hopper). No Blackwell sentence is supported here. |
-| 'FlashInfer cannot run on sm120: 950 ERROR of 960 cells' | **No ERROR rows exist anywhere** (the only statuses present are OK/UNSUPPORTED/OOM_PREDICTED/OOM) and there is no sm120 device. D4-flashinfer is OK on 3605 rows and OOM on 15. The nvcc-12.8-cannot-target-Blackwell finding is not reproducible from this data. |
+| RTX 5090 / sm120 as a fifth compute-capability target | **No sm120 rows exist.** `rows.parquet` holds 6 devices: A10 (8.6), A100 (8.0), NVIDIA GeForce RTX 5090 (12.0), H100 (9.0), L40 (8.9), L40S (8.9) -- 5 compute capabilities across 3 architecture families (Ampere, Ada, Hopper). No Blackwell sentence is supported here. |
+| 'FlashInfer cannot run on sm120: 950 ERROR of 960 cells' | **No ERROR rows exist anywhere** (the only statuses present are OK/UNSUPPORTED/OOM_PREDICTED/OOM) and there is no sm120 device. D4-flashinfer is OK on 3605 rows and OOM on 25. The nvcc-12.8-cannot-target-Blackwell finding is not reproducible from this data. |
 | NUMA pinning: between-process CV 0.112 -> 0.034, configs disagreeing >25% 30.7% -> 9.9%, 3-GPU flip rate 58.1% -> 63.9% | **Not derivable here.** `results_h100_unpinned/` holds `raw/` and `environment/` but **no `processed/`**, so there is no unpinned parquet to compare against. Run `python -m akp.analysis results_h100_unpinned/raw` before quoting any of these. |
 | Binary provenance: flash-attn 2.8.3 ships SASS for sm_80/90/100/120 and no PTX; `libtorch_cuda` alone carries native sm_89 | **Not in `results/processed/`.** `scripts/provenance.sh` exists but deposits nothing here. The claim may well hold; it is not one of *these* numbers, and needs its own committed cuobjdump artefact. |
 | Nsight Compute / Nsight Systems counters | **None exist.** `analysis.nsight()` finds no `results/profile/*/ncu.csv`. No occupancy, cache-hit-rate, or counter-derived roofline claim can be made. |
 | 'FlashInfer is the decode winner on A10 128, A100 133, H100 113 configs' | A10 128 and A100 133 reproduce; **H100 is 131, not 113** -- the H100 decode grid grew to 244 cells. Re-derive before quoting. |
-| '`fuse_attention` is 0 on all 1215 inductor rows' | The finding holds but **the n has grown to 1996** rows with a captured counter (of 10085 inductor rows total). Quote 1996. |
+| '`fuse_attention` is 0 on all 1215 inductor rows' | The finding holds but **the n has grown to 2636** rows with a captured counter (of 13205 inductor rows total). Quote 2636. |
 
 ### B. Present in the data but too thin, confounded, or measuring something other than what the sentence says
 
@@ -486,13 +516,13 @@ H100 is the noisiest device in the set at the tail -- p95 CV **0.461** and p95 r
 | Anything about L40S standalone | Prefill only, 2 process repeats, 101 of 159 prefill cells, 186 of 675 usable triples single-process. Sound as the L40 twin control; not a standalone device result. | 101 cells |
 | L40 decode bandwidth utilisation (median 1.038) | Exceeds 1.0, so the measured-peak probe under-reads L40 rather than the kernels exceeding hardware. The ratio is not a utilisation. Quote effective GB/s, or re-measure peak bandwidth on that part. | 2414 rows |
 | Cold-L2 cache sensitivity | **H100 only**, 56 paired measurements, median sensitivity -0.030 -- i.e. cold measures *faster* than warm, which is a pairing artefact, not a result. No other device produced a cold/warm pair at a matching `inner_k`. | 56 pairs |
-| Selector 'vs fixed policy' speedups | Prefill-only by construction: the >50% coverage filter drops every decode policy at 49.6%. Against the two strongest fixed prefill policies the median speedup is 1.000x and 0.996x. Never quote the headline speedup without naming the policy and both absolute latencies. | 388 held-out cells |
+| Selector 'vs fixed policy' speedups | Prefill-only by construction: the >50% coverage filter drops every decode policy at 51.9%. Against the two strongest fixed prefill policies the median speedup is 1.053x and 1.000x. Never quote the headline speedup without naming the policy and both absolute latencies. | 574 held-out cells |
 | H100 decode latencies below ~25 us | H100's event overhead is 5.088 us and its fastest usable cell is 6.34 us -- **1.2x overhead**. 153 of 2474 H100 triples sit within 5x of the timer. The fastest of them (D4-flashinfer, `decode\|B1\|Hq32\|Hkv32\|D64\|N512\|fp16\|fwd\|cudagraph\|warm\|c0`) is also a winner cell, so at the small-B, small-N, cudagraph end the winner margin is competing with timer resolution. Report those cells with the overhead beside them or exclude them. | 153 triples |
-| Selector top-1 accuracy (38.9%) | Reads as a failure but is not the quantity of interest -- median regret is 1.023. Lead with regret; if accuracy appears at all, put regret beside it. | 772 held-out cells |
-| 'torch.compile does not rewrite naive attention into SDPA' | The **counter** claim is solid (0 on 1996 rows). The stronger claim is not: 45 probed inductor rows on H100 do carry a flash kernel in the trace. Say 'Inductor's `fuse_attention` counter never fired'. | 1996 rows |
-| Dispatch mismatch rate | 0.552% among probed rows but 0.349% over all audited rows -- state the denominator. 36.8% of OK rows were never probed, so the rate on unprobed rows is **unknown**, not zero. | 21033 probed of 33282 |
-| Spread quoted as a cross-regime ratio | Prefill 11.0x against decode 3.26x compares different implementation sets (10 vs 6) over different cells and different lengths. It is a statement about how much the *choice* matters per regime, not about any kernel's speed. | 656 / 819 device-cell pairs |
-| Any pairwise inversion rate at or below the same-architecture floor | The L40 vs L40S control already shows 3.02% practical inversions at Spearman 0.929. A10 vs L40 (1.75%) sits at or below that floor and is therefore not evidence of architectural disagreement. The floor is calibrated on prefill only, so decode has no established floor at all. | 1953 impl pairs (control) |
+| Selector top-1 accuracy (39.0%) | Reads as a failure but is not the quantity of interest -- median regret is 1.013. Lead with regret; if accuracy appears at all, put regret beside it. | 1108 held-out cells |
+| 'torch.compile does not rewrite naive attention into SDPA' | The **counter** claim is solid (0 on 2636 rows). The stronger claim is not: 45 probed inductor rows on H100 do carry a flash kernel in the trace. Say 'Inductor's `fuse_attention` counter never fired'. | 2636 rows |
+| Dispatch mismatch rate | 0.560% among probed rows but 0.342% over all audited rows -- state the denominator. 39.0% of OK rows were never probed, so the rate on unprobed rows is **unknown**, not zero. | 25541 probed of 41865 |
+| Spread quoted as a cross-regime ratio | Prefill 10.6x against decode 3.10x compares different implementation sets (10 vs 6) over different cells and different lengths. It is a statement about how much the *choice* matters per regime, not about any kernel's speed. | 800 / 1011 device-cell pairs |
+| Any pairwise inversion rate at or below the same-architecture floor | The L40 vs L40S control already shows 3.02% practical inversions at Spearman 0.929. A10 vs L40 (1.75%), NVIDIA GeForce RTX 5090 vs L40 (2.56%) sits at or below that floor and is therefore not evidence of architectural disagreement. The floor is calibrated on prefill only, so decode has no established floor at all. | 1953 impl pairs (control) |
 
 ### C. Wording discipline these numbers do not license
 

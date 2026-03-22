@@ -977,6 +977,63 @@ def _selftest():
     print("selftest ok")
 
 
+def fig6_winner_bands(d: dict, wins: pd.DataFrame, out: str) -> str:
+    """The winner map binned to workload bands, sized for one paper column.
+
+    fig1 draws one row per configuration, which is right for the artifact and
+    unreadable at 3.03 in: its 5 pt labels land near 2 pt. Binning to a dozen
+    bands keeps the pattern the figure exists to show, which is whether the
+    colour changes across a row, and makes the labels legible in print.
+    """
+    w = wins.copy()
+    k = cell_key(w.cell)
+    w = pd.concat([w, k.drop(columns=k.columns.intersection(w.columns))], axis=1)
+
+    def band(r):
+        lo = "N" if r.regime == "prefill" else "KV"
+        n = "short" if r.N <= 1024 else ("mid" if r.N <= 4096 else "long")
+        b = "B1" if r.B == 1 else ("B4-8" if r.B <= 8 else "B16+")
+        return "%s %s %s %s" % (r.regime[:3], b, lo, n)
+
+    w["band"] = w.apply(band, axis=1)
+    gpus = [short_gpu(g) for g in gpu_order(d)]
+    bands = sorted(w.band.unique(), key=lambda s: (s.split()[0], s))
+    impls = sorted(w.winner.unique())
+    cmap = {im: COLOURS.get(im, "#8A92A0") for im in impls}
+
+    fig, ax = plt.subplots(figsize=(3.03, 0.26 * len(bands) + 0.9))
+    for yi, bd in enumerate(bands):
+        for xi, g in enumerate(gpus):
+            sub = w[(w.band == bd) & (w.gpu_name.map(short_gpu) == g)]
+            if not len(sub):
+                continue
+            # Modal winner in the band, and whether the band is decisive: a
+            # band where most cells have no separated winner is drawn hollow,
+            # so a colour change there is not read as a real difference.
+            top = sub.winner.value_counts().idxmax()
+            share = sub.separated.mean()
+            ax.add_patch(Rectangle((xi, yi), 1, 1,
+                                       facecolor=cmap[top] if share >= .5 else "none",
+                                       edgecolor=cmap[top], linewidth=.8,
+                                       hatch=None if share >= .5 else "///"))
+    ax.set_xlim(0, len(gpus)); ax.set_ylim(0, len(bands))
+    ax.set_xticks([i + .5 for i in range(len(gpus))])
+    ax.set_xticklabels(gpus, fontsize=6, rotation=35, ha="right")
+    ax.set_yticks([i + .5 for i in range(len(bands))])
+    ax.set_yticklabels(bands, fontsize=5.6)
+    ax.invert_yaxis()
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.tick_params(length=0)
+    handles = [Patch(facecolor=cmap[i], label=i) for i in impls]
+    handles.append(Patch(facecolor="none", edgecolor="#555", hatch="///",
+                         label="no separated winner"))
+    ax.legend(handles=handles, fontsize=5, loc="upper center",
+              bbox_to_anchor=(.5, -.14), ncol=2, frameon=False)
+    fig.tight_layout()
+    return save(fig, out, "fig6_winner_bands.pdf")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("processed", nargs="?", default="results/processed",
@@ -997,6 +1054,7 @@ def main(argv=None):
 
     wins = winner_table(d["rows"])
     fig1_winner_map(d, wins, a.out)
+    fig6_winner_bands(d, wins, a.out)
     fig2_prefill_latency(d, a.out)
     fig3_decode_bandwidth(d, a.out)
     mat = pd.DataFrame()
