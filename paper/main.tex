@@ -49,10 +49,10 @@ implementations over 403 configurations on six NVIDIA GPUs spanning sm80, sm86,
 sm89, sm90 and sm120, under one software distribution: torch 2.9.0+cu128, CUDA
 12.8, triton 3.5.0, flash-attn 2.8.3, flashinfer 0.6.18. Restricted to the roughly one third of configurations whose fastest
 implementation is separated from the runner-up on both devices, decode rankings
-largely transfer across Ampere, Ada and Hopper (19 of 198 paired comparisons
-flip) while prefill rankings do not (61 of 92 flip). The decode agreement then
-collapses against the Blackwell part, at 55 of 73, and availability rather than
-architecture accounts for 53 of those 55: FlashInfer, which wins 131 of 244
+largely transfer across Ampere, Ada and Hopper (26 of 274 paired comparisons
+flip) while prefill rankings do not (88 of 144 flip). The decode agreement then
+collapses against the Blackwell part, at 64 of 84, and availability rather than
+architecture accounts for 62 of those 64: FlashInfer, which wins 131 of 244
 decode configurations on H100, produced no timing at all on the RTX 5090,
 raising a compute-capability \code{RuntimeError} on 950 of 960 attempted rows. A
 cuobjdump audit of the wheels shows the same asymmetry statically: flash-attn
@@ -67,8 +67,8 @@ A practitioner choosing an attention kernel reads a benchmark run on one GPU.
 Does its winner survive a change of device?
 
 We time 10 prefill and 6 decode implementations over 403 configurations on the
-six GPUs of Table~\ref{tab:devices}; 56{,}234 measured rows collapse to
-10{,}359 usable (GPU, configuration, implementation) medians.
+six GPUs of Table~\ref{tab:devices}; 67{,}470 measured rows collapse to
+11{,}616 usable (GPU, configuration, implementation) medians.
 
 \section{Background and related work}
 
@@ -127,10 +127,10 @@ the \code{block\_bench} wall-clock timer, not by CUDA events, so neither number
 is comparable with the 0.026 above.
 
 \paragraph{Correctness gate.} Every implementation is checked against a
-reference in its equivalence class, and only rows that pass enter a ranking. Of 56{,}234 rows, 41{,}865 (74.4\%) ran and passed;
-12{,}077 are \code{UNSUPPORTED}, 1{,}196 were refused in advance by an
+reference in its equivalence class, and only rows that pass enter a ranking. Of 67{,}470 rows, 50{,}355 (74.6\%) ran and passed;
+14{,}622 are \code{UNSUPPORTED}, 1{,}392 were refused in advance by an
 out-of-memory predictor, and 950 raised a run-time error, all of them one
-implementation on one device (Section~\ref{sec:mech}). The remaining 146 hit the
+implementation on one device (Section~\ref{sec:mech}). The remaining 151 hit the
 allocator despite passing the predictor, a defect in the predictor and not in
 the implementation it was meant to protect. No row failed numerically. All
 claims are within-device orderings compared across devices, never that device A
@@ -197,7 +197,7 @@ filled only where at least half its cells have a winner separated by the
 criterion of Section~\ref{sec:port}; the other 67 of the 99 non-empty
 band-device cells are hatched, where the colour is a mode over cells that are
 mostly ties, so a colour change across a hatched row is not evidence of a real
-difference. All 1{,}811 (device, cell) pairs with two or more usable
+difference. All 2{,}046 (device, cell) pairs with two or more usable
 implementations are binned, not only cells every device ran.}
 \label{fig:winnermap}
 \end{figure}
@@ -208,26 +208,26 @@ implementations are binned, not only cells every device ran.}
 \paragraph{Most cells have no decisive winner.} A winner counts as
 \emph{separated} only if its ratio to the
 runner-up is at least 1.10 and the cluster-bootstrap CI on that ratio excludes
-1. By that criterion only 35.4\% of the 1{,}811 (device, cell) pairs with at
-least two usable implementations have a separated winner, 36.7\% in decode and
-33.8\% in prefill, and Figure~\ref{fig:winnermap} hatches every band where they
+1. By that criterion only 32.4\% of the 2{,}046 (device, cell) pairs with at
+least two usable implementations have a separated winner, 33.4\% in decode and
+31.0\% in prefill, and Figure~\ref{fig:winnermap} hatches every band where they
 are a minority. A flip between implementations within a few percent of each
 other is a coin toss reported as a result, so every rate below is computed
 twice, over all shared cells and over cells separated on both devices.
 
-\paragraph{The regime split.} Table~\ref{tab:flips} pools the six device pairs
-among A10, A100, L40 and H100. Restriction pulls the two regimes apart. Prefill
-barely moves, 61 of 92 comparisons still flip, so the disagreement survives the
-exclusion of ties, while decode drops to 19 of 198, consistent with most of the
+\paragraph{The regime split.} Table~\ref{tab:flips} pools the ten device pairs
+among A10, A100, L40, L40S and H100. Restriction pulls the two regimes apart. Prefill
+barely moves, 88 of 144 comparisons still flip, so the disagreement survives the
+exclusion of ties, while decode drops to 26 of 274, consistent with most of the
 apparent decode disagreement being ties resolved differently on each device.
 
 \paragraph{The Blackwell collapse.} The lower half of Table~\ref{tab:flips}
-repeats the calculation for the four pairs including the RTX 5090. The decode
+repeats the calculation for the five pairs including the RTX 5090. The decode
 rate does not
-fall under restriction, staying at 55 of 73, while prefill falls to 20 of 48.
+fall under restriction, staying at 64 of 84, while prefill falls to 23 of 55.
 What makes the 5090 disagree is therefore specific to decode, and
-Section~\ref{sec:mech} identifies it as availability, not architecture: in 53 of
-those 55 flips the winner on the other device is FlashInfer, which produced no
+Section~\ref{sec:mech} identifies it as availability, not architecture: in 62 of
+those 64 flips the winner on the other device is FlashInfer, which produced no
 timing on the 5090.
 
 \begin{table}[tb]
@@ -240,15 +240,15 @@ timing on the 5090.
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}
 device set & regime & n & flip & n & flip [95\% CI] \\
 \midrule
-\multirow{2}{*}{Amp/Ada/Hop} & prefill &  756 & 65.9\% &  92 & 66.3\% [57, 76] \\
-                             & decode  & 1149 & 47.3\% & 198 &  9.6\% [4.7, 15] \\
+\multirow{2}{*}{Amp/Ada/Hop} & prefill & 1296 & 62.0\% & 144 & 61.1\% [54, 69] \\
+                             & decode  & 1916 & 52.1\% & 274 &  9.5\% [4.9, 15] \\
 \midrule
-\multirow{2}{*}{5090 vs rest} & prefill & 540 & 54.4\% & 48 & 41.7\% [27, 57] \\
-                              & decode  & 767 & 78.4\% & 73 & 75.3\% [58, 90] \\
+\multirow{2}{*}{5090 vs rest} & prefill &  684 & 55.0\% &  55 & 41.8\% [27, 57] \\
+                              & decode  &  959 & 78.4\% &  84 & 76.2\% [60, 90] \\
 \bottomrule
 \end{tabular}
 \caption{Winner-flip rate, pooled over device pairs. \emph{Amp/Ada/Hop} pools
-the six pairs among A10, A100, L40 and H100; \emph{5090 vs rest} the four
+the ten pairs among A10, A100, L40, L40S and H100; \emph{5090 vs rest} the five
 joining the RTX 5090 to each. \emph{n} counts device-pair comparisons on cells
 both devices ran, \emph{flip} the share where the fastest implementation
 differs. The right columns keep only cells separated on both devices; their
@@ -262,7 +262,8 @@ contributes to several pairs.}
 
 \paragraph{The decode leader does not run on Blackwell.} FlashInfer
 is the decode winner on 128 of 191 cells on A10, 133 of 192 on A100, 131 of 244
-on H100 and 87 of 192 on L40. On the RTX 5090 it wins nothing because it never
+on H100 and 87 of 192 on L40, though only 49 of 192 on L40S, where the
+SDPA path leads instead. On the RTX 5090 it wins nothing because it never
 ran: of 960 attempted rows, 950 raised \code{RuntimeError: FlashInfer requires
 GPUs with sm75 or higher} across 190 distinct cells, and the other 10 hit the
 allocator. The text names sm75 on an sm120 part, so it is not a diagnosis, and
@@ -331,9 +332,9 @@ and H100 against L40, flipping on 9 of 33. Prefill is clean: all six devices ran
 prefill at one commit.
 
 \paragraph{Thin repeats, and an expensive restriction.} A100 prefill has 2
-process repeats and 67\% grid completeness, L40S has 2 and L40 has 3. Across the
-dataset 663 of 10{,}359 usable triples have a single process repeat, 476 of them
-on A100 prefill and 186 on L40S, and for those the bootstrap has nothing to
+process repeats and 20\% grid completeness, and L40 has 3. Across the
+dataset 477 of 11{,}616 usable triples have a single process repeat, 476 of them
+on A100 prefill, and for those the bootstrap has nothing to
 resample, so their CI width of 0 is an artefact. Requiring a separated winner on
 both sides then discards about two thirds of the cells as ties, which is the
 right call for a ranking claim but leaves the headline comparisons resting on
