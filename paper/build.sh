@@ -22,13 +22,14 @@ command -v "$TECTONIC" >/dev/null 2>&1 || {
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
-cp "$HERE"/*.tex "$HERE"/*.sty "$HERE"/*.bst "$HERE"/*.bib "$STAGE"/ 2>/dev/null || true
-# Figures are referenced as results/figures/*.pdf from the document, so the
-# staging directory has to mirror that shape rather than flatten it.
-mkdir -p "$STAGE/results/figures"
+# \graphicspath is ../results/figures/, relative to the .tex file, so the
+# staging tree has to mirror the repository shape: sources under paper/ and
+# figures beside it, not both flattened into one directory.
+mkdir -p "$STAGE/paper" "$STAGE/results/figures"
+cp "$HERE"/*.tex "$HERE"/*.sty "$HERE"/*.bst "$HERE"/*.bib "$STAGE/paper"/ 2>/dev/null || true
 cp "$HERE"/../results/figures/*.pdf "$STAGE/results/figures/" 2>/dev/null || true
 
-cd "$STAGE"
+cd "$STAGE/paper"
 "$TECTONIC" -X compile main.tex 2>&1 | tail -12
 
 if [ -f main.pdf ]; then
