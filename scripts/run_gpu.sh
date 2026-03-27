@@ -25,4 +25,4 @@ for grid in $GRIDS; do
   done
 done
 
-python -m akp.analysis
+python -m akp.analysis results/raw
