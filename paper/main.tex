@@ -50,7 +50,7 @@ sm89, sm90 and sm120, under one software distribution: torch 2.9.0+cu128, CUDA
 12.8, triton 3.5.0, flash-attn 2.8.3, flashinfer 0.6.18. Restricted to the roughly one third of configurations whose fastest
 implementation is separated from the runner-up on both devices, decode rankings
 largely transfer across Ampere, Ada and Hopper (26 of 274 paired comparisons
-flip) while prefill rankings do not (88 of 144 flip). The decode agreement then
+flip) while prefill rankings do not (82 of 144 flip). The decode agreement then
 collapses against the Blackwell part, at 64 of 84, and availability rather than
 architecture accounts for 62 of those 64: FlashInfer, which wins 131 of 244
 decode configurations on H100, produced no timing at all on the RTX 5090,
@@ -67,8 +67,8 @@ A practitioner choosing an attention kernel reads a benchmark run on one GPU.
 Does its winner survive a change of device?
 
 We time 10 prefill and 6 decode implementations over 403 configurations on the
-six GPUs of Table~\ref{tab:devices}; 67{,}470 measured rows collapse to
-11{,}616 usable (GPU, configuration, implementation) medians.\footnote{Harness, analysis and figure code: \url{https://github.com/Srivatsan6923/attention-kernel-portability}}
+six GPUs of Table~\ref{tab:devices}; 73{,}230 measured rows collapse to
+11{,}858 usable (GPU, configuration, implementation) medians.\footnote{Harness, analysis and figure code: \url{https://github.com/Srivatsan6923/attention-kernel-portability}}
 
 \section{Background and related work}
 
@@ -127,8 +127,8 @@ the \code{block\_bench} wall-clock timer, not by CUDA events, so neither number
 is comparable with the 0.026 above.
 
 \paragraph{Correctness gate.} Every implementation is checked against a
-reference in its equivalence class, and only rows that pass enter a ranking. Of 67{,}470 rows, 50{,}355 (74.6\%) ran and passed;
-14{,}622 are \code{UNSUPPORTED}, 1{,}392 were refused in advance by an
+reference in its equivalence class, and only rows that pass enter a ranking. Of 73{,}230 rows, 54{,}213 (74.0\%) ran and passed;
+16{,}326 are \code{UNSUPPORTED}, 1{,}590 were refused in advance by an
 out-of-memory predictor, and 950 raised a run-time error, all of them one
 implementation on one device (Section~\ref{sec:mech}). The remaining 151 hit the
 allocator despite passing the predictor, a defect in the predictor and not in
@@ -146,10 +146,10 @@ not taken from a datasheet.
 GPU & cc & family & BW & reps & cells \\
  & & & (GB/s) & pre/dec & pre/dec \\
 \midrule
-A100     & 8.0  & Ampere    & 1732.8 & 2/5 & 108/192 \\
+A100     & 8.0  & Ampere    & 1732.8 & 5/5 & 144/192 \\
 A10      & 8.6  & Ampere    &  483.3 & 5/5 & 144/191 \\
 L40      & 8.9  & Ada       &  644.4 & 3/3 & 144/192 \\
-L40S     & 8.9  & Ada       &  645.3 & 2/n/a & 101/n/a \\
+L40S     & 8.9  & Ada       &  644.4 & 5/5 & 144/192 \\
 H100     & 9.0  & Hopper    & 2979.7 & 5/5 & 159/244 \\
 RTX 5090 & 12.0 & Blackwell & 1517.5 & 5/5 & 144/192 \\
 \bottomrule
@@ -157,7 +157,7 @@ RTX 5090 & 12.0 & Blackwell & 1517.5 & 5/5 & 144/192 \\
 \caption{The six devices. BW is peak copy bandwidth measured in-process on that
 host, never a vendor figure. \emph{reps} is the designed number of independent
 process repeats per cell; where a run was cut short the realised median is
-lower, at 1 for A100 prefill and 2/2 for L40. \emph{cells} counts configurations
+lower, at 2 for L40. \emph{cells} counts configurations
 with at least one usable measurement.}
 \label{tab:devices}
 \end{table}
@@ -167,20 +167,20 @@ with at least one usable measurement.}
 A latency is evidence about a kernel only if that kernel is the one that ran, so
 we record the launched kernel names for every timed row and compare them with
 the implementation the harness asked for. Of the 41{,}865 passing rows, 25{,}541
-(61.0\%) captured a readable trace. Grouping by the tuple that determines
+(66.5\%) captured a readable trace. Grouping by the tuple that determines
 dispatch, (implementation, GPU, head dimension, dtype, GQA ratio, mode, launch),
-gives 610 dispatch classes, 575 of them (94.3\%) with at least one probed row.
-Among probed rows the requested kernel family is absent from the trace in 143
-cases, a mismatch rate of 0.560\%, or 0.342\% over every audited row. The
-unprobed 39.0\% count as unknown, never as agreement. Mismatches concentrate:
-66 of the 143 are the SDPA memory-efficient backend on H100. The cells behind
-the headline comparisons are probed at the dataset's own rate: of the 482
-device-cells entering the restricted columns of Table~\ref{tab:flips}, 61.1\% of
-passing rows carry a trace, and 40 of the 143 mismatches land on one of them.
+gives 651 dispatch classes, 625 of them (96.0\%) with at least one probed row.
+Among probed rows the requested kernel family is absent from the trace in 162
+cases, a mismatch rate of 0.449\%, or 0.299\% over every audited row. The
+unprobed 33.5\% count as unknown, never as agreement. Mismatches concentrate:
+66 of the 162 are the SDPA memory-efficient backend on H100. The cells behind
+the headline comparisons are probed at the dataset's own rate: of the 551
+device-cells entering the restricted columns of Table~\ref{tab:flips}, 63.5\% of
+passing rows carry a trace, and 51 of the 162 mismatches land on one of them.
 
-The Inductor result needs its exact scope. Across 13{,}205 Inductor rows,
-2{,}636 captured TorchInductor's \code{fuse\_attention} counter, and on all
-2{,}636, on all six devices, that counter is 0. Inductor's own attention-fusion
+The Inductor result needs its exact scope. Across 17{,}537 Inductor rows,
+3{,}645 captured TorchInductor's \code{fuse\_attention} counter, and on all
+3{,}645, on all six devices, that counter is 0. Inductor's own attention-fusion
 pattern did not fire on any row whose counter we could read. The stronger claim,
 that no Inductor row reached a flash kernel at all, does not hold: 45 probed
 Inductor rows, all on H100, over 6 distinct cells, do carry a flash kernel in
@@ -197,7 +197,7 @@ filled only where at least half its cells have a winner separated by the
 criterion of Section~\ref{sec:port}; the other 67 of the 99 non-empty
 band-device cells are hatched, where the colour is a mode over cells that are
 mostly ties, so a colour change across a hatched row is not evidence of a real
-difference. All 2{,}046 (device, cell) pairs with two or more usable
+difference. All 2{,}082 (device, cell) pairs with two or more usable
 implementations are binned, not only cells every device ran.}
 \label{fig:winnermap}
 \end{figure}
@@ -208,23 +208,23 @@ implementations are binned, not only cells every device ran.}
 \paragraph{Most cells have no decisive winner.} A winner counts as
 \emph{separated} only if its ratio to the
 runner-up is at least 1.10 and the cluster-bootstrap CI on that ratio excludes
-1. By that criterion only 32.4\% of the 2{,}046 (device, cell) pairs with at
+1. By that criterion only 31.9\% of the 2{,}082 (device, cell) pairs with at
 least two usable implementations have a separated winner, 33.4\% in decode and
-31.0\% in prefill, and Figure~\ref{fig:winnermap} hatches every band where they
+29.8\% in prefill, and Figure~\ref{fig:winnermap} hatches every band where they
 are a minority. A flip between implementations within a few percent of each
 other is a coin toss reported as a result, so every rate below is computed
 twice, over all shared cells and over cells separated on both devices.
 
 \paragraph{The regime split.} Table~\ref{tab:flips} pools the ten device pairs
 among A10, A100, L40, L40S and H100. Restriction pulls the two regimes apart. Prefill
-barely moves, 88 of 144 comparisons still flip, so the disagreement survives the
+barely moves, 82 of 144 comparisons still flip, so the disagreement survives the
 exclusion of ties, while decode drops to 26 of 274, consistent with most of the
 apparent decode disagreement being ties resolved differently on each device.
 
 \paragraph{The Blackwell collapse.} The lower half of Table~\ref{tab:flips}
 repeats the calculation for the five pairs including the RTX 5090. The decode
 rate does not
-fall under restriction, staying at 64 of 84, while prefill falls to 23 of 55.
+fall under restriction, staying at 64 of 84, while prefill falls to 21 of 55.
 What makes the 5090 disagree is therefore specific to decode, and
 Section~\ref{sec:mech} identifies it as availability, not architecture: in 62 of
 those 64 flips the winner on the other device is FlashInfer, which produced no
@@ -240,10 +240,10 @@ timing on the 5090.
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}
 device set & regime & n & flip & n & flip [95\% CI] \\
 \midrule
-\multirow{2}{*}{Amp/Ada/Hop} & prefill & 1296 & 62.0\% & 144 & 61.1\% [54, 69] \\
-                             & decode  & 1916 & 52.1\% & 274 &  9.5\% [4.9, 15] \\
+\multirow{2}{*}{Amp/Ada/Hop} & prefill & 1440 & 61.8\% & 144 & 56.9\% [48, 65] \\
+                             & decode  & 1916 & 52.1\% & 274 &  9.5\% [4.7, 14] \\
 \midrule
-\multirow{2}{*}{5090 vs rest} & prefill &  684 & 55.0\% &  55 & 41.8\% [27, 57] \\
+\multirow{2}{*}{5090 vs rest} & prefill &  720 & 53.5\% &  55 & 38.2\% [24, 55] \\
                               & decode  &  959 & 78.4\% &  84 & 76.2\% [60, 90] \\
 \bottomrule
 \end{tabular}
@@ -325,23 +325,27 @@ A10 and A100 rows, 595.71.05; the H100 rows (580.126.09) and the RTX 5090 rows
 of the six Ampere/Ada/Hopper decode pairs cross that boundary, so for them
 architecture and software version move together and the agreement cannot be
 attributed to hardware alone. The confound runs against the finding rather than
-for it, since the pooled decode set agrees on 179 of 198 separated comparisons
+for it, since the pooled decode set agrees on 248 of 274 separated comparisons
 while carrying a commit and driver change on top of an architecture change. The
 two pairs that stay inside one commit are A10 against A100, flipping on 2 of 32,
-and H100 against L40, flipping on 9 of 33. Prefill is clean: all six devices ran
-prefill at one commit.
+and H100 against L40, flipping on 9 of 33. Prefill is clean in that sense: all six devices ran prefill at one commit.
+A100 prefill was however re-measured on a rented host, driver 580.126.16,
+after the cluster run reached only one usable process repeat, so that device's
+two regimes come from two hosts. No comparison crosses the boundary, since
+every ranking is formed within one device and one regime, and the two hosts
+measured copy bandwidth within 0.05\% of each other.
 
-\paragraph{Thin repeats, and an expensive restriction.} A100 prefill has 2
-process repeats and 20\% grid completeness, and L40 has 3. Across the
-dataset 477 of 11{,}616 usable triples have a single process repeat, 476 of them
-on A100 prefill, and for those the bootstrap has nothing to
-resample, so their CI width of 0 is an artefact. Requiring a separated winner on
+\paragraph{Thin repeats, and an expensive restriction.} L40 has 3 designed
+process repeats against 5 on every other device, and a realised median of 2,
+though its cell coverage is complete. Across the dataset 1 of 11{,}858 usable
+triples has a single process repeat, and for it the bootstrap has nothing to
+resample, so its CI width of 0 is an artefact. Requiring a separated winner on
 both sides then discards about two thirds of the cells as ties, which is the
 right call for a ranking claim but leaves the headline comparisons resting on
 tens to low hundreds of paired cells.
 
-\paragraph{Unprobed dispatch cells.} 39.0\% of passing rows captured no kernel
-trace and 35 of 610 dispatch classes have no probed row at all, so the 0.560\%
+\paragraph{Unprobed dispatch cells.} 33.5\% of passing rows captured no kernel
+trace and 26 of 651 dispatch classes have no probed row at all, so the 0.449\%
 mismatch rate is a rate among probed rows. On the unprobed rows the answer is
 unknown, not zero.
 
