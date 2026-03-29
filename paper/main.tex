@@ -66,9 +66,36 @@ regime, software-distribution snapshot).
 A practitioner choosing an attention kernel reads a benchmark run on one GPU.
 Does its winner survive a change of device?
 
+The question is usually assumed rather than measured. Serving systems fix an
+attention backend by preference order and carry that order onto every device
+they deploy on, and kernel papers report a winner on the one part their authors
+had. If the ordering belongs to the kernel, that practice is sound. If it
+belongs to the pairing of kernel and device, a preference order tuned on an
+A100 is a guess everywhere else.
+
 We time 10 prefill and 6 decode implementations over 403 configurations on the
 six GPUs of Table~\ref{tab:devices}; 73{,}230 measured rows collapse to
 11{,}858 usable (GPU, configuration, implementation) medians.\footnote{Harness, analysis and figure code: \url{https://github.com/Srivatsan6923/attention-kernel-portability}}
+Every claim is a within-device ordering compared across devices, never a claim
+that one device is faster than another, so host effects such as clock drift and
+contention are common to the implementations being compared.
+
+Four results follow. First, most configurations have no decisive winner: on
+68.1\% of them the fastest implementation is not separated from the runner-up
+by both a 10\% margin and a bootstrap interval excluding 1, and a winner
+reported there is noise. Second, among configurations that do have a decisive
+winner, decode orderings largely transfer across Ampere, Ada and Hopper while
+prefill orderings do not. Third, decode agreement collapses against the
+Blackwell part, and the cause is availability rather than architecture: the
+implementation that wins decode almost everywhere else refuses to run on sm120.
+Fourth, an audit of the shipped binaries shows the same asymmetry statically,
+before anything is timed.
+
+Two contributions follow from that. The first is a protocol that records which
+kernel actually ran rather than which was requested, and that reports a winner
+only where it is separated from the runner-up. The second is the finding itself:
+the unit of performance is not (kernel, GPU) but (kernel, GPU, regime,
+software-distribution snapshot).
 
 \section{Background and related work}
 
@@ -274,7 +301,7 @@ the fallback: the RTX 5090's decode winner is
 \paragraph{The wheels themselves.} Table~\ref{tab:prov} is a coverage map, not a
 performance result. Its first two rows are the packaging asymmetry the prefill
 flip rates sit beside:
-FlashAttention 2 is the prefill winner on 43 of 144 A10 cells, 55 of 108 A100
+FlashAttention 2 is the prefill winner on 43 of 144 A10 cells, 85 of 144 A100
 cells and 72 of 144 RTX 5090 cells, and on H100 it wins none of the 159 while
 FlashAttention 3 takes 81. That pattern is \emph{consistent with} the packaging
 but not shown to be caused by it: we did not rebuild flash-attn for the missing
@@ -339,7 +366,11 @@ measured copy bandwidth within 0.05\% of each other.
 process repeats against 5 on every other device, and a realised median of 2,
 though its cell coverage is complete. Across the dataset 1 of 11{,}858 usable
 triples has a single process repeat, and for it the bootstrap has nothing to
-resample, so its CI width of 0 is an artefact. Requiring a separated winner on
+resample, so its CI width of 0 is an artefact. To check that thinner
+sampling does not manufacture separated winners, we recount separation on
+two complete devices after subsampling them to three repeats: L40S moves
+from 31 to 34 separated decode cells and A100 from 115 to 110, so the
+criterion is dominated by the 1.10 margin rather than by bootstrap width. Requiring a separated winner on
 both sides then discards about two thirds of the cells as ties, which is the
 right call for a ranking claim but leaves the headline comparisons resting on
 tens to low hundreds of paired cells.
@@ -371,7 +402,14 @@ timed is a single attention call on six devices from one vendor.
 
 On these six devices, which attention implementation is fastest is not a
 property of the implementation, and a benchmark naming none of the device, the
-regime and the distribution has under-specified its result.
+regime and the distribution has under-specified its result. Two practical
+consequences follow. A serving system that fixes its attention backend by
+preference order should re-measure that order on each deployment target, since
+the orderings that transfer here are the decode ones, and only within the
+architectures for which the installed libraries ship native code. And a
+reported winner should carry the margin separating it from the runner-up,
+because on roughly two thirds of the configurations measured here there is no
+separation to report.
 
 \bibliography{custom}
 
