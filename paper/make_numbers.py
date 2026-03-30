@@ -831,14 +831,19 @@ table(["GPU", "triples", "triples with >1 process", "median CV", "p95 CV",
         "%.4f" % r.med_ci, "%.4f" % r.p95_ci] for r in sg.itertuples()])
 
 n1 = int((cells.reps == 1).sum())
+# Device list and verdict both come from the data: hardcoding either meant the
+# sentence kept asserting an artefact after the offending device was completed.
+by1 = cells[cells.reps == 1].groupby("gpu_name").size().sort_values(ascending=False)
+where = ", ".join("%d on %s" % (n, sh(g)) for g, n in by1.items()) or "none"
 w("**%d of %d usable triples have a single process repeat**, so they have no "
-  "CV at all and a bootstrap CI of width 0. They are %d on A100 prefill, %d on "
-  "L40S prefill and %d on L40 prefill. Any A100-prefill or L40S CI figure is "
-  "dominated by these and is an artefact, not a precision measurement."
-  % (n1, len(cells),
-     int(((cells.reps == 1) & (cells.gpu_name == "NVIDIA A100-SXM4-80GB")).sum()),
-     int(((cells.reps == 1) & (cells.gpu_name == "NVIDIA L40S")).sum()),
-     int(((cells.reps == 1) & (cells.gpu_name == "NVIDIA L40")).sum())))
+  "CV at all and a bootstrap CI of width 0 (%s)." % (n1, len(cells), where))
+if n1 > 0.01 * len(cells):
+    w("At that share the CI figures for the affected devices are dominated by "
+      "these triples and are an artefact, not a precision measurement.")
+else:
+    w("At %.2f%% of triples they cannot move an aggregate, so the CI figures "
+      "below are precision measurements rather than artefacts."
+      % (100.0 * n1 / max(len(cells), 1)))
 w("")
 a10 = stab[stab.gpu_name == "NVIDIA A10"]
 a100d = stab[(stab.gpu_name == "NVIDIA A100-SXM4-80GB")

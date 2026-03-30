@@ -5,8 +5,8 @@ across prefill vs. single-token KV-cache decode?
 
 Attention kernels are usually benchmarked on one GPU, in one regime, and the
 ranking is reported as if it were a property of the kernel. This repo measures
-how far such a ranking actually travels — across Ampere, Ada, Hopper and
-Blackwell, and between prefill and decode — with every measurement gated on
+how far such a ranking actually travels, across Ampere, Ada, Hopper and
+Blackwell and between prefill and decode, with every measurement gated on
 numerical correctness and on a check that the kernel which ran is the kernel
 that was requested.
 
@@ -17,14 +17,15 @@ fallback path, a different SDPA backend, or a compiler substitution. Every cell
 here records the CUDA kernels the call actually launched, and the requested vs.
 observed backend is reconciled in analysis rather than assumed.
 
-Two things this has already caught on the development GPU (RTX 4060, sm89,
-torch 2.10 / triton 3.6):
+Two things this caught, first on the development GPU and then across the full
+six-device sweep:
 
 - **TorchInductor does not rewrite naive attention into SDPA.**
   `counters["inductor"]["fuse_attention"] == 0` for all three compiled variants,
   including the `torch.where` spelling that `_sfdp_pattern_18/19` are written
-  against. Inductor fuses the softmax epilogue into its own Triton kernel — 3
-  launched kernels against the naive path's 8 — but keeps both GEMMs and still
+  against. Across the finished dataset, 3,645 of 17,537 Inductor rows captured
+  the counter and it is 0 on every one of them, on all six devices. Inductor fuses the softmax epilogue into its own Triton kernel, 3
+  launched kernels against the naive path's 8, but keeps both GEMMs and still
   materializes the N×N score matrix.
 - **The upstream Triton tutorial-06 kernel is fp16-only.** It hardcodes
   `tl.float16` in the forward and in three backward casts, so it fails to
@@ -39,8 +40,13 @@ torch 2.10 / triton 3.6):
     akp/check.py     fp32 reference, correctness gate, dispatch probe
     akp/run.py       grids, resume, interleaved measurement, status taxonomy
     akp/analysis.py  metrics, ranking inversions, dispatch audit, backend selector
+    akp/preflight.py per-GPU gate a sweep refuses to start without
+    akp/figures.py   the paper figures and the winner map
+    akp/webdata.py   aggregates results/processed into the article's web.json
     tests/           semantic checks for the failures that stay silent
     dashboard/app.py results dashboard
+    paper/           the preprint, plus numbers.md tracing every quoted figure
+    site/            the long-form article (Astro + MDX)
     env/Dockerfile   pinned image (torch 2.9, flash-attn, flashinfer)
     scripts/         NRP job specs, the single-host sweep loop, profiling
 
@@ -50,7 +56,7 @@ torch 2.10 / triton 3.6):
     pytest tests/ -q
     python -m akp.preflight          # must print Overall: PASS
     python -m akp.run --grid smoke   # ~90 s, writes results/raw/<gpu>/*.jsonl
-    python -m akp.analysis
+    python -m akp.analysis results/raw
 
 `akp.preflight` is the gate on collecting anything from a GPU. It checks the
 device is the one requested and not a MIG slice, that nothing else is resident
@@ -113,7 +119,7 @@ On a single host without Kubernetes (a rented H100, an Ada box):
 ## Dashboard
 
     pip install -e ".[dash]"
-    python -m akp.analysis          # writes results/processed/
+    python -m akp.analysis results/raw   # writes results/processed/
     streamlit run dashboard/app.py
 
 Seven pages: hardware and environment, prefill, decode, dispatch and fallbacks,
@@ -126,7 +132,7 @@ number in the report cannot disagree.
 **Causal alignment.** flash-attn ≥ 2.1 aligns its causal mask bottom-right;
 PyTorch SDPA's `is_causal` is top-left. They agree only when `q_len == kv_len`.
 At `q_len=1, kv_len=N` flash-attn attends to all N keys and SDPA attends to key
-0 — fast, and silently wrong. Decode passes each API its own "attend to
+0, which is fast and silently wrong. Decode passes each API its own "attend to
 everything" spelling; `tests/test_semantics.py` asserts the two conventions
 disagree, so the test fails loudly if either library changes.
 
@@ -155,7 +161,35 @@ timeline for ten representative cells. `ncu` needs GPU performance counters,
 which shared clusters usually withhold; `nsys` CUDA tracing does not, so the
 launch-overhead half of the attribution survives without them.
 
+## Results
+
+Six GPUs across four architecture families (sm80, sm86, sm89, sm90, sm120),
+73,230 measured rows, 11,858 usable (GPU, configuration, implementation)
+medians, one software snapshot: torch 2.9.0+cu128, CUDA 12.8, triton 3.5.0,
+flash-attn 2.8.3, flashinfer 0.6.18.
+
+- **Most configurations have no decisive winner.** On 68.1% of them the fastest
+  implementation is not separated from the runner-up by both a 10% margin and a
+  bootstrap interval excluding 1.
+- **Decode rankings mostly transfer across Ampere, Ada and Hopper** (26 of 274
+  separated comparisons flip); **prefill rankings do not** (82 of 144).
+- **Decode agreement collapses against Blackwell** (64 of 84), and the cause is
+  availability rather than architecture: FlashInfer, the decode winner on most
+  other devices, raised a compute-capability error on 950 of 960 attempted rows
+  on the RTX 5090.
+- **The wheels show the same asymmetry statically.** flash-attn 2.8.3 ships no
+  sm_86 or sm_89 cubins and no PTX, so on those parts it runs sm_80 code
+  (`scripts/provenance.sh`).
+
+`paper/` holds the preprint and `paper/numbers.md` traces every number in it
+back to the code that produced it. `site/` is the long-form write-up.
+
 ## Status
 
-Harness verified on the development GPU. A100 sweeps next; H100 and the
-held-out devices after that.
+Data collection is complete. L40 carries 3 process repeats against 5 elsewhere,
+with full cell coverage; subsampling a complete device to 3 repeats moves its
+separated-winner count by 3 to 5 cells in 192, so the criterion is dominated by
+the 1.10 margin rather than by sampling depth.
+
+The raw shards (456 MB) and `results/processed/` are not in git. A dataset
+release is the remaining step before the preprint is submitted.
