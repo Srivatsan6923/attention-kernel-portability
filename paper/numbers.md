@@ -506,14 +506,14 @@ H100 is the noisiest device in the set at the tail -- p95 CV **0.461** and p95 r
 
 ## NUMBERS THAT ARE NOT SAFE TO QUOTE YET
 
-### A. Claims carried in the project notes that this dataset does not support
+### A. Claims carried in the project notes, checked against this dataset
 
 | claim as carried in the notes | status against `results/processed/` |
 |---|---|
-| RTX 5090 / sm120 as a fifth compute-capability target | **No sm120 rows exist.** `rows.parquet` holds 6 devices: A10 (8.6), A100 (8.0), NVIDIA GeForce RTX 5090 (12.0), H100 (9.0), L40 (8.9), L40S (8.9) -- 5 compute capabilities across 3 architecture families (Ampere, Ada, Hopper). No Blackwell sentence is supported here. |
-| 'FlashInfer cannot run on sm120: 950 ERROR of 960 cells' | **No ERROR rows exist anywhere** (the only statuses present are OK/UNSUPPORTED/OOM_PREDICTED/OOM) and there is no sm120 device. D4-flashinfer is OK on 4565 rows and OOM on 25. The nvcc-12.8-cannot-target-Blackwell finding is not reproducible from this data. |
-| NUMA pinning: between-process CV 0.112 -> 0.034, configs disagreeing >25% 30.7% -> 9.9%, 3-GPU flip rate 58.1% -> 63.9% | **Not derivable here.** `results_h100_unpinned/` holds `raw/` and `environment/` but **no `processed/`**, so there is no unpinned parquet to compare against. Run `python -m akp.analysis results_h100_unpinned/raw` before quoting any of these. |
-| Binary provenance: flash-attn 2.8.3 ships SASS for sm_80/90/100/120 and no PTX; `libtorch_cuda` alone carries native sm_89 | **Not in `results/processed/`.** `scripts/provenance.sh` exists but deposits nothing here. The claim may well hold; it is not one of *these* numbers, and needs its own committed cuobjdump artefact. |
+| RTX 5090 / sm120 as a fifth compute-capability target | **Supported.** NVIDIA GeForce RTX 5090 contributes 12960 rows at cc 12.0, so the dataset spans 5 compute capabilities across 4 architecture families (Ampere, Ada, Hopper, Blackwell). Devices: A10 (8.6), A100 (8.0), NVIDIA GeForce RTX 5090 (12.0), H100 (9.0), L40 (8.9), L40S (8.9). |
+| 'FlashInfer cannot run on sm120: 950 ERROR of 960 cells' | **Supported, with the caveat in the error text.** 950 of 960 attempted FlashInfer rows on the sm120 part are `ERROR`. The message names sm75 on an sm120 device, so it reports unavailability, not a diagnosis. Dataset-wide D4-flashinfer is OK on 4565 rows and OOM on 25. |
+| NUMA pinning: between-process CV 0.112 -> 0.034, configs disagreeing >25% 30.7% -> 9.9% | **Supported, on a matched subset.** Median between-process CV 0.1116 unpinned against 0.0341 pinned (3.27x), and the share of triples over 25% CV falls 30.8% to 9.9%, over 966 triples spanning 192 cells on each side, timed by `block_bench`, not CUDA events. The 3-GPU flip-rate half of the original claim is not part of this artefact. |
+| Binary provenance: flash-attn 2.8.3 ships no sm_86/sm_89 SASS and no PTX; `libtorch_cuda` alone carries native sm_89 | **Present as its own artefact**, `results/processed/provenance.txt`, from `scripts/provenance.sh` (`cuobjdump`, no GPU required). The flash-attn row reads: `flash-attn-2               951MB  SASS[ sm_80 sm_90 sm_100 sm_120 ]  PTX[ none ]`. It is a static coverage map, so it is consistent with the win/loss pattern rather than shown to cause it; no rebuild was performed. |
 | Nsight Compute / Nsight Systems counters | **None exist.** `analysis.nsight()` finds no `results/profile/*/ncu.csv`. No occupancy, cache-hit-rate, or counter-derived roofline claim can be made. |
 | 'FlashInfer is the decode winner on A10 128, A100 133, H100 113 configs' | A10 128 and A100 133 reproduce; **H100 is 131, not 113** -- the H100 decode grid grew to 244 cells. Re-derive before quoting. |
 | '`fuse_attention` is 0 on all 1215 inductor rows' | The finding holds but **the n has grown to 3645** rows with a captured counter (of 17537 inductor rows total). Quote 3645. |

@@ -7,6 +7,7 @@ rather than a re-typing. Nothing in numbers.md is hand-entered.
 """
 from __future__ import annotations
 
+import io
 import itertools
 import json
 import os
@@ -866,9 +867,89 @@ w("")
 # Not safe
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# Section A verdicts
+#
+# These were hardcoded once and went stale silently: the sm120 and ERROR
+# entries kept asserting absence after the RTX 5090 landed, contradicting the
+# device list printed beside them. A verdict that cannot be recomputed is a
+# claim, not a check, so each one now reads the data it is about.
+# --------------------------------------------------------------------------- #
+
+def _sm120_verdict(GPUS, env, sh, rows):
+    blk = [g for g in GPUS if env[g]["cc_major"] >= 12]
+    ccs = len({(env[g]["cc_major"], env[g]["cc_minor"]) for g in GPUS})
+    devs = ", ".join("%s (%d.%d)" % (sh(g), env[g]["cc_major"],
+                                     env[g]["cc_minor"]) for g in GPUS)
+    if not blk:
+        return ("**No sm120 rows exist.** `rows.parquet` holds %d devices: %s "
+                "-- %d compute capabilities. No Blackwell sentence is "
+                "supported here." % (len(GPUS), devs, ccs))
+    n = int(rows.gpu_name.isin(blk).sum())
+    return ("**Supported.** %s contributes %d rows at cc 12.0, so the dataset "
+            "spans %d compute capabilities across 4 architecture families "
+            "(Ampere, Ada, Hopper, Blackwell). Devices: %s."
+            % (", ".join(sh(g) for g in blk), n, ccs, devs))
+
+
+def _flashinfer_sm120_verdict(GPUS, env, rows, n_fi_ok, n_fi_oom):
+    blk = [g for g in GPUS if env[g]["cc_major"] >= 12]
+    fi = rows[rows.implementation == "D4-flashinfer"]
+    if not blk or fi.empty:
+        return ("**Not checkable.** No sm120 device, or no FlashInfer rows. "
+                "D4-flashinfer is OK on %d rows and OOM on %d."
+                % (n_fi_ok, n_fi_oom))
+    sub = fi[fi.gpu_name.isin(blk)]
+    err = int((sub.status == "ERROR").sum())
+    if err == 0:
+        return ("**Not reproduced.** FlashInfer raised no error on the sm120 "
+                "part; %d rows attempted." % len(sub))
+    return ("**Supported, with the caveat in the error text.** %d of %d "
+            "attempted FlashInfer rows on the sm120 part are `ERROR`. The "
+            "message names sm75 on an sm120 device, so it reports "
+            "unavailability, not a diagnosis. Dataset-wide D4-flashinfer is OK "
+            "on %d rows and OOM on %d." % (err, len(sub), n_fi_ok, n_fi_oom))
+
+
+def _numa_verdict():
+    p = os.path.join(ROOT, "results", "processed", "numa_ablation.json")
+    if not os.path.exists(p):
+        return ("**Not derivable here.** No `numa_ablation.json` in "
+                "`results/processed/`. Run `scripts/numa_ablation.py` first.")
+    a = json.load(open(p, encoding="utf8"))
+    by = {c["condition"]: c for c in a["cells"]}
+    u, q = by.get("unpinned"), by.get("pinned")
+    if not (u and q):
+        return "**Incomplete.** `numa_ablation.json` lacks a pinned/unpinned pair."
+    return ("**Supported, on a matched subset.** Median between-process CV "
+            "%.4f unpinned against %.4f pinned (%.2fx), and the share of "
+            "triples over 25%% CV falls %.1f%% to %.1f%%, over %d triples "
+            "spanning %d cells on each side, timed by `%s`, not CUDA events. "
+            "The 3-GPU flip-rate half of the original claim is not part of "
+            "this artefact."
+            % (u["median_cv"], q["median_cv"], a["cv_reduction"],
+               100 * u["frac_over_25pct"], 100 * q["frac_over_25pct"],
+               u["n_triples"], u["n_cells"], "/".join(u["timers"])))
+
+
+def _provenance_verdict():
+    p = os.path.join(ROOT, "results", "processed", "provenance.txt")
+    if not os.path.exists(p):
+        return ("**Not in `results/processed/`.** `scripts/provenance.sh` "
+                "exists but deposits nothing here.")
+    body = io.open(p, encoding="utf8").read()
+    head = [ln for ln in body.splitlines() if ln.startswith("flash-attn-2")]
+    return ("**Present as its own artefact**, `results/processed/provenance.txt`, "
+            "from `scripts/provenance.sh` (`cuobjdump`, no GPU required). "
+            "The flash-attn row reads: `%s`. It is a static coverage map, so "
+            "it is consistent with the win/loss pattern rather than shown to "
+            "cause it; no rebuild was performed."
+            % (head[0].strip() if head else "see the file"))
+
+
 w("## NUMBERS THAT ARE NOT SAFE TO QUOTE YET")
 w("")
-w("### A. Claims carried in the project notes that this dataset does not support")
+w("### A. Claims carried in the project notes, checked against this dataset")
 w("")
 n_fi_ok = int(((rows.implementation == "D4-flashinfer")
                & (rows.status == "OK")).sum())
@@ -876,30 +957,15 @@ n_fi_oom = int(((rows.implementation == "D4-flashinfer")
                 & (rows.status == "OOM")).sum())
 table(["claim as carried in the notes", "status against `results/processed/`"],
       [["RTX 5090 / sm120 as a fifth compute-capability target",
-        "**No sm120 rows exist.** `rows.parquet` holds %d devices: %s -- %d "
-        "compute capabilities across 3 architecture families (Ampere, Ada, "
-        "Hopper). No Blackwell sentence is supported here."
-        % (len(GPUS),
-           ", ".join("%s (%d.%d)" % (sh(g), env[g]["cc_major"],
-                                     env[g]["cc_minor"]) for g in GPUS),
-           len({(env[g]["cc_major"], env[g]["cc_minor"]) for g in GPUS}))],
+        _sm120_verdict(GPUS, env, sh, rows)],
        ["'FlashInfer cannot run on sm120: 950 ERROR of 960 cells'",
-        "**No ERROR rows exist anywhere** (the only statuses present are "
-        "OK/UNSUPPORTED/OOM_PREDICTED/OOM) and there is no sm120 device. "
-        "D4-flashinfer is OK on %d rows and OOM on %d. The "
-        "nvcc-12.8-cannot-target-Blackwell finding is not reproducible from "
-        "this data." % (n_fi_ok, n_fi_oom)],
+        _flashinfer_sm120_verdict(GPUS, env, rows, n_fi_ok, n_fi_oom)],
        ["NUMA pinning: between-process CV 0.112 -> 0.034, configs disagreeing "
-        ">25% 30.7% -> 9.9%, 3-GPU flip rate 58.1% -> 63.9%",
-        "**Not derivable here.** `results_h100_unpinned/` holds `raw/` and "
-        "`environment/` but **no `processed/`**, so there is no unpinned "
-        "parquet to compare against. Run `python -m akp.analysis "
-        "results_h100_unpinned/raw` before quoting any of these."],
-       ["Binary provenance: flash-attn 2.8.3 ships SASS for sm_80/90/100/120 "
-        "and no PTX; `libtorch_cuda` alone carries native sm_89",
-        "**Not in `results/processed/`.** `scripts/provenance.sh` exists but "
-        "deposits nothing here. The claim may well hold; it is not one of "
-        "*these* numbers, and needs its own committed cuobjdump artefact."],
+        ">25% 30.7% -> 9.9%",
+        _numa_verdict()],
+       ["Binary provenance: flash-attn 2.8.3 ships no sm_86/sm_89 SASS and no "
+        "PTX; `libtorch_cuda` alone carries native sm_89",
+        _provenance_verdict()],
        ["Nsight Compute / Nsight Systems counters",
         "**None exist.** `analysis.nsight()` finds no "
         "`results/profile/*/ncu.csv`. No occupancy, cache-hit-rate, or "
