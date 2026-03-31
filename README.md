@@ -186,7 +186,8 @@ back to the code that produced it. `site/` is the long-form write-up.
 
 ## Status
 
-Data collection is complete. L40 carries 3 process repeats against 5 elsewhere,
+Data collection is complete. L40 carries 3 designed process repeats against 5
+elsewhere and a realised median of 2,
 with full cell coverage; subsampling a complete device to 3 repeats moves its
 separated-winner count by 3 to 5 cells in 192, so the criterion is dominated by
 the 1.10 margin rather than by sampling depth.

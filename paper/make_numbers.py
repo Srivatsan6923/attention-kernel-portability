@@ -328,9 +328,17 @@ w("- **Decode, A10/A100/H100** (n_gpus=3, n_cells=%d): **%.1f%%**. This one is "
   "confounded -- see the not-safe section." % (n_td, 100 * f_td))
 w("- **Both regimes pooled, A10/A100/H100** (n_gpus=3, n_cells=%d): **%.1f%%**."
   % (n_tp, 100 * f_tp))
-w("- **All 5 devices** (n_gpus=5, n_cells=%d, **prefill only** -- L40S ran no "
-  "decode): **%.1f%%**. Must be labelled prefill-only and is not comparable "
-  "to the 3-device figure." % (n_all, 100 * f_all))
+# Which regimes the all-device intersection covers is a fact about the data.
+# Asserting "prefill only, L40S ran no decode" kept printing after L40S was
+# completed, and the decode-wins table two sections down contradicted it.
+_shared_all = set(W[W.gpu_name == GPUS[0]].cell)
+for _g in GPUS[1:]:
+    _shared_all &= set(W[W.gpu_name == _g].cell)
+_regs = sorted({c.split("|")[0] for c in _shared_all})
+w("- **All %d devices** (n_gpus=%d, n_cells=%d, regimes: %s): **%.1f%%**. Must "
+  "carry its device and cell count; it is not comparable to the 3-device "
+  "figure, since more devices raises the rate mechanically."
+  % (len(GPUS), len(GPUS), n_all, ", ".join(_regs) or "none", 100 * f_all))
 w("")
 
 # --------------------------------------------------------------------------- #
@@ -773,12 +781,21 @@ for pol in sorted(set(cells.implementation)):
                  "%.3fx" % np.nanmedian(fx / chosen),
                  "%.3fx" % np.nanpercentile(fx / chosen, 95)])
 body.sort(key=lambda r: -float(r[5][:-1]))
-n_dec_cov = int((hreg == "decode").sum()) / len(hold)
-w("Against standing on one fixed implementation everywhere. **Every surviving "
-  "policy is a prefill kernel**: the analysis drops any policy covering less "
-  "than half the held-out cells, and the decode implementations reach only "
-  "%.1f%%, so all of them were dropped. **This table is a prefill-only "
-  "comparison and must be labelled as such.**" % (100 * n_dec_cov))
+# Report which policies survived the filter, rather than asserting it. The
+# filter keeps anything above 50% coverage, the decode policies sit near 57%,
+# and the previous wording said they had been dropped while the table below
+# listed them. The 57.1% it quoted was the decode share of held-out cells, a
+# different quantity that happens to be numerically close.
+kept_dec = [r[0] for r in body if r[0].startswith("D")]
+kept_pre = [r[0] for r in body if r[0].startswith("P")]
+w("Against standing on one fixed implementation everywhere. The analysis drops "
+  "any policy covering less than half the held-out cells; %d survive, %d "
+  "prefill (%s) and %d decode (%s). A fixed policy is defined only on the cells "
+  "its implementation actually ran, so each row compares the selector against "
+  "that policy over that policy's own coverage. The rows are not comparable "
+  "with one another."
+  % (len(body), len(kept_pre), ", ".join(kept_pre) or "none",
+     len(kept_dec), ", ".join(kept_dec) or "none"))
 w("")
 table(["fixed policy", "coverage of held-out cells", "n cells",
        "fixed median latency", "selector median latency on those cells",
@@ -991,22 +1008,26 @@ w("### B. Present in the data but too thin, confounded, or measuring something "
   "other than what the sentence says")
 w("")
 table(["number", "why it is not safe as written", "n"],
-      [["All-5-device winner-flip rate (%.1f%%)" % (100 * f_all),
-        "Only %d cells are shared by all five devices and **every one of them "
-        "is prefill** (L40S ran no decode). It is also not comparable with the "
-        "3-device %.1f%%: more devices raises the rate mechanically. Quote it "
-        "only as 'prefill, 5 devices, n=%d'." % (n_all, 100 * f_tp, n_all),
+      [["All-device winner-flip rate (%.1f%%)" % (100 * f_all),
+        "Only %d cells are shared by all %d devices, covering %s. It is not "
+        "comparable with the 3-device %.1f%%: more devices raises the rate "
+        "mechanically. Quote it only with its device and cell count."
+        % (n_all, len(GPUS), " and ".join(_regs) or "no regime", 100 * f_tp),
         "%d cells%s" % (n_all, thin(n_all))],
-       ["Any decode cross-GPU comparison involving A10 or A100",
+       ["Any decode cross-GPU comparison that crosses the commit boundary",
         "**Confounded with a commit and driver change.** A10 and A100 decode "
-        "rows are *all* at git `468b9a55`; H100 and L40 decode rows are *all* "
-        "at `91959d34`, recorded days later, with different manifest drivers "
-        "(595.71.05 / 580.126.09 / 610.43.02). Architecture and software "
-        "version move together, so the %.1f%% decode flip rate cannot be "
-        "attributed to hardware. **Prefill is clean** -- all five devices ran "
-        "prefill at `91959d34`, so the %.1f%% prefill flip rate is not "
-        "confounded this way." % (100 * f_td, 100 * f_ah),
-        "191-244 decode cells per device"],
+        "rows are *all* at git `468b9a55`; L40, L40S, H100 and RTX 5090 decode "
+        "rows are *all* at `91959d34`, recorded days later, on drivers "
+        "595.71.05 / 570.124.06 / 580.126.09 / 580.173.02. Six of the ten "
+        "Ampere/Ada/Hopper decode pairs cross that boundary. The confound does "
+        "**not** run against the finding as the paper once claimed: measured, "
+        "the crossing pairs flip on 5.6%% of their 162 separated comparisons "
+        "and the within-commit pairs on 15.2%% of 112, so pooling inflates "
+        "agreement. Quote decode over the four within-commit pairs. **Prefill "
+        "is clean** -- all %d devices ran prefill at `91959d34`, so the %.1f%% "
+        "prefill flip rate is not confounded this way."
+        % (len(GPUS), 100 * f_ah),
+        "112 separated within-commit"],
        ["Anything about A100 prefill",
         "%d rows at **%d process repeats**, %.0f%% grid completeness, and %d "
         "of its %d usable *prefill* triples are single-process -- so its "
@@ -1047,11 +1068,14 @@ table(["number", "why it is not safe as written", "n"],
         "%d pairs%s" % (int(cs.sensitivity.notna().sum()),
                         thin(int(cs.sensitivity.notna().sum())))],
        ["Selector 'vs fixed policy' speedups",
-        "Prefill-only by construction: the >50%% coverage filter drops every "
-        "decode policy at %.1f%%. Against the two strongest fixed prefill "
-        "policies the median speedup is %s. Never quote the headline speedup "
-        "without naming the policy and both absolute latencies."
-        % (100 * n_dec_cov,
+        "Each row is scored on a different set of cells, namely the cells that "
+        "policy's implementation actually ran, so the rows are not comparable "
+        "with one another and no row is a statement about the whole held-out "
+        "set. %d policies survive the >50%% coverage filter (%s). Against the "
+        "strongest of them the median speedup is %s, i.e. a wash. Never quote "
+        "the headline speedup without naming the policy it beats and both "
+        "absolute latencies."
+        % (len(body), ", ".join(r[0] for r in body) or "none",
            " and ".join(r[5] for r in body[-2:]) if len(body) >= 2 else "n/a"),
         "%s held-out cells" % body[0][2] if body else "n/a"],
        ["H100 decode latencies below ~25 us",

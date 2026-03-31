@@ -168,7 +168,7 @@ Headline sentences that are safe, each carrying its own n_gpus and n:
 - **Prefill, A10 vs H100** (n_gpus=2, n_cells=144): the fastest implementation changes on **81.9%** of matched cells.
 - **Decode, A10/A100/H100** (n_gpus=3, n_cells=191): **58.1%**. This one is confounded -- see the not-safe section.
 - **Both regimes pooled, A10/A100/H100** (n_gpus=3, n_cells=335): **73.1%**.
-- **All 5 devices** (n_gpus=5, n_cells=335, **prefill only** -- L40S ran no decode): **96.7%**. Must be labelled prefill-only and is not comparable to the 3-device figure.
+- **All 6 devices** (n_gpus=6, n_cells=335, regimes: decode, prefill): **96.7%**. Must carry its device and cell count; it is not comparable to the 3-device figure, since more devices raises the rate mechanically.
 
 ## 4. Pairwise agreement
 
@@ -407,7 +407,7 @@ Per regime, on the held-out devices:
 | prefill | 576 | 1087.4 us | 1174.5 us | 1.0401 | 1.396 | 39.2% |
 | decode | 767 | 310.2 us | 240.9 us | 1.0084 | 1.238 | 37.9% |
 
-Against standing on one fixed implementation everywhere. **Every surviving policy is a prefill kernel**: the analysis drops any policy covering less than half the held-out cells, and the decode implementations reach only 57.1%, so all of them were dropped. **This table is a prefill-only comparison and must be labelled as such.**
+Against standing on one fixed implementation everywhere. The analysis drops any policy covering less than half the held-out cells; 4 survive, 0 prefill (none) and 4 decode (D0-naive-kv, D6-fa-prefill-at-1, D2-sdpa, D3-fa-kvcache). A fixed policy is defined only on the cells its implementation actually ran, so each row compares the selector against that policy over that policy's own coverage. The rows are not comparable with one another.
 
 | fixed policy | coverage of held-out cells | n cells | fixed median latency | selector median latency on those cells | median speedup | p95 speedup |
 |---|---|---|---|---|---|---|
@@ -522,13 +522,13 @@ H100 is the noisiest device in the set at the tail -- p95 CV **0.461** and p95 r
 
 | number | why it is not safe as written | n |
 |---|---|---|
-| All-5-device winner-flip rate (96.7%) | Only 335 cells are shared by all five devices and **every one of them is prefill** (L40S ran no decode). It is also not comparable with the 3-device 73.1%: more devices raises the rate mechanically. Quote it only as 'prefill, 5 devices, n=335'. | 335 cells |
-| Any decode cross-GPU comparison involving A10 or A100 | **Confounded with a commit and driver change.** A10 and A100 decode rows are *all* at git `468b9a55`; H100 and L40 decode rows are *all* at `91959d34`, recorded days later, with different manifest drivers (595.71.05 / 580.126.09 / 610.43.02). Architecture and software version move together, so the 58.1% decode flip rate cannot be attributed to hardware. **Prefill is clean** -- all five devices ran prefill at `91959d34`, so the 81.9% prefill flip rate is not confounded this way. | 191-244 decode cells per device |
+| All-device winner-flip rate (96.7%) | Only 335 cells are shared by all 6 devices, covering decode and prefill. It is not comparable with the 3-device 73.1%: more devices raises the rate mechanically. Quote it only with its device and cell count. | 335 cells |
+| Any decode cross-GPU comparison that crosses the commit boundary | **Confounded with a commit and driver change.** A10 and A100 decode rows are *all* at git `468b9a55`; L40, L40S, H100 and RTX 5090 decode rows are *all* at `91959d34`, recorded days later, on drivers 595.71.05 / 570.124.06 / 580.126.09 / 580.173.02. Six of the ten Ampere/Ada/Hopper decode pairs cross that boundary. The confound does **not** run against the finding as the paper once claimed: measured, the crossing pairs flip on 5.6% of their 162 separated comparisons and the within-commit pairs on 15.2% of 112, so pooling inflates agreement. Quote decode over the four within-commit pairs. **Prefill is clean** -- all 6 devices ran prefill at `91959d34`, so the 81.9% prefill flip rate is not confounded this way. | 112 separated within-commit |
 | Anything about A100 prefill | 7200 rows at **5 process repeats**, 100% grid completeness, and 0 of its 966 usable *prefill* triples are single-process -- so its median relative CI width reads 0.0000 as an artefact of having nothing to bootstrap. | 108 cells |
 | Anything about L40S standalone | Prefill only, 5 process repeats, 144 of 159 prefill cells, 0 of 1932 usable triples single-process. Sound as the L40 twin control; not a standalone device result. | 101 cells |
 | L40 decode bandwidth utilisation (median 1.038) | Exceeds 1.0, so the measured-peak probe under-reads L40 rather than the kernels exceeding hardware. The ratio is not a utilisation. Quote effective GB/s, or re-measure peak bandwidth on that part. | 2414 rows |
 | Cold-L2 cache sensitivity | **H100 only**, 56 paired measurements, median sensitivity -0.030 -- i.e. cold measures *faster* than warm, which is a pairing artefact, not a result. No other device produced a cold/warm pair at a matching `inner_k`. | 56 pairs |
-| Selector 'vs fixed policy' speedups | Prefill-only by construction: the >50% coverage filter drops every decode policy at 57.1%. Against the two strongest fixed prefill policies the median speedup is 1.026x and 1.000x. Never quote the headline speedup without naming the policy and both absolute latencies. | 766 held-out cells |
+| Selector 'vs fixed policy' speedups | Each row is scored on a different set of cells, namely the cells that policy's implementation actually ran, so the rows are not comparable with one another and no row is a statement about the whole held-out set. 4 policies survive the >50% coverage filter (D0-naive-kv, D6-fa-prefill-at-1, D2-sdpa, D3-fa-kvcache). Against the strongest of them the median speedup is 1.026x and 1.000x, i.e. a wash. Never quote the headline speedup without naming the policy it beats and both absolute latencies. | 766 held-out cells |
 | H100 decode latencies below ~25 us | H100's event overhead is 5.088 us and its fastest usable cell is 6.34 us -- **1.2x overhead**. 153 of 2474 H100 triples sit within 5x of the timer. The fastest of them (D4-flashinfer, `decode\|B1\|Hq32\|Hkv32\|D64\|N512\|fp16\|fwd\|cudagraph\|warm\|c0`) is also a winner cell, so at the small-B, small-N, cudagraph end the winner margin is competing with timer resolution. Report those cells with the overhead beside them or exclude them. | 153 triples |
 | Selector top-1 accuracy (38.5%) | Reads as a failure but is not the quantity of interest -- median regret is 1.018. Lead with regret; if accuracy appears at all, put regret beside it. | 1343 held-out cells |
 | 'torch.compile does not rewrite naive attention into SDPA' | The **counter** claim is solid (0 on 3645 rows). The stronger claim is not: 45 probed inductor rows on H100 do carry a flash kernel in the trace. Say 'Inductor's `fuse_attention` counter never fired'. | 3645 rows |
