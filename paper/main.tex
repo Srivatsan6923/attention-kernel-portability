@@ -52,8 +52,9 @@ sm89, sm90 and sm120, under one software distribution: torch 2.9.0+cu128, CUDA
 the runner-up by both a 10\% margin and a bootstrap interval excluding 1. Among
 those that are separated, prefill rankings do not transfer, flipping on 82 of
 144 paired comparisons, with all six devices measured at one harness commit.
-Decode spans two commits, and over the four device pairs sharing one, rankings
-transfer on 95 of 112 comparisons. Decode agreement then collapses against the
+Decode rankings do transfer, and unevenly: pairs within Ampere and Ada flip
+on 5 of 145 separated comparisons while pairs involving Hopper flip on 21 of
+129. Decode agreement then collapses against the
 Blackwell part, at 64 of 84, and availability rather than
 architecture accounts for 62 of those 64: FlashInfer, which wins 131 of 244
 decode configurations on H100, produced no timing at all on the RTX 5090,
@@ -235,10 +236,9 @@ implementations are binned, not only cells every device ran.}
 \section{Portability}
 \label{sec:port}
 
-\paragraph{Most cells have no decisive winner.} A winner counts as
-\emph{separated} only if its ratio to the
-runner-up is at least 1.10 and the cluster-bootstrap CI on that ratio excludes
-1. By that criterion only 31.9\% of the 2{,}082 (device, cell) pairs with at
+\paragraph{Most cells have no decisive winner.} A winner counts as \emph{separated} only if the runner-up's median latency is
+at least 1.10 times the winner's and the cluster-bootstrap CI on that ratio
+excludes 1. By that criterion only 31.9\% of the 2{,}082 (device, cell) pairs with at
 least two usable implementations have a separated winner, 33.4\% in decode and
 29.8\% in prefill, and Figure~\ref{fig:winnermap} hatches every band where they
 are a minority. A flip between implementations within a few percent of each
@@ -248,9 +248,12 @@ twice, over all shared cells and over cells separated on both devices.
 \paragraph{The regime split.} Table~\ref{tab:flips} pools the ten device pairs
 among A10, A100, L40, L40S and H100. Restriction pulls the two regimes apart. Prefill
 barely moves, 82 of 144 comparisons still flip, so the disagreement survives the
-exclusion of ties, while decode drops to 17 of 112 over the four device pairs that share a
-harness commit, consistent with most of the apparent decode disagreement being
-ties resolved differently on each device.
+exclusion of ties, while decode drops to 26 of 274, consistent with most of the apparent decode
+disagreement being ties resolved differently on each device. That residual is
+not spread evenly. Pairs within Ampere and Ada flip on 5 of 145 separated
+comparisons, interval [1, 7], and pairs involving H100 on 21 of 129, interval
+[8, 26]. Decode rankings transfer well across Ampere and Ada and degrade once
+Hopper is one of the two devices.
 
 \paragraph{The Blackwell collapse.} The lower half of Table~\ref{tab:flips}
 repeats the calculation for the five pairs including the RTX 5090. The decode
@@ -272,17 +275,14 @@ timing on the 5090.
 device set & regime & n & flip & n & flip [95\% CI] \\
 \midrule
 \multirow{2}{*}{Amp/Ada/Hop} & prefill & 1440 & 61.8\% & 144 & 56.9\% [48, 65] \\
-                             & decode  &  767 & 52.2\% & 112 & 15.2\% [8, 23] \\
+                             & decode  & 1916 & 52.1\% & 274 &  9.5\% [4.7, 14] \\
 \midrule
 \multirow{2}{*}{5090 vs rest} & prefill &  720 & 53.5\% &  55 & 38.2\% [24, 55] \\
                               & decode  &  959 & 78.4\% &  84 & 76.2\% [60, 90] \\
 \bottomrule
 \end{tabular}
 \caption{Winner-flip rate, pooled over device pairs. \emph{Amp/Ada/Hop} pools
-the ten pairs among A10, A100, L40, L40S and H100 for prefill, and for decode
-only the four of those measured at one harness commit, since
-Section~\ref{sec:threats} shows that pooling across the commit boundary
-inflates agreement; \emph{5090 vs rest} the five
+the ten pairs among A10, A100, L40, L40S and H100; \emph{5090 vs rest} the five
 joining the RTX 5090 to each. \emph{n} counts device-pair comparisons on cells
 both devices ran, \emph{flip} the share where the fastest implementation
 differs. The right columns keep only cells separated on both devices; their
@@ -352,23 +352,23 @@ the audit and not in the install.}
 \section{Threats to validity}
 \label{sec:threats}
 
-\paragraph{The decode comparison is confounded.} We recorded the A10 and A100 decode
-rows at one commit of the harness and the L40, L40S, H100 and RTX 5090 decode
-rows at a later one, days afterwards. The L40 rows carry the same manifest
-driver as the A10 and A100 rows, 595.71.05; the L40S (570.124.06), H100
-(580.126.09) and RTX 5090 (580.173.02) rows do not. Six of the ten
-Ampere/Ada/Hopper decode pairs cross that boundary, so for them architecture and
-software version move together and agreement cannot be attributed to hardware
-alone. We expected that to run against the finding, on the reasoning that a
-commit and driver change on top of an architecture change gives disagreement
-more ways to appear. The data says the opposite. The pairs crossing the boundary
-flip on 5.6\% of their 162 separated comparisons while the pairs inside one
-commit flip on 15.2\% of 112, so pooling the two inflates apparent agreement
-rather than stressing it. Table~\ref{tab:flips} therefore reports decode over
-the four within-commit pairs only: A10 against A100 at 2 of 32, H100 against L40
-at 9 of 33, H100 against L40S at 4 of 21, and L40 against L40S at 2 of 26.
-Re-measuring A10 and A100 decode at the later commit would remove the split
-entirely and is the obvious next run. Prefill is clean in that sense: all six devices ran prefill at one commit.
+\paragraph{Decode spans two harness revisions, and one host per device.} The
+A10 and A100 decode rows carry harness commit \code{468b9a55} and every other
+decode row \code{91959d34}, recorded days later. Diffing the two revisions
+shows the measurement path is unchanged: \code{bench.py}, \code{impls.py},
+\code{check.py} and the vendored Triton kernel are byte-identical, the image
+pins the same library versions, and the \code{run.py} differences decide which
+cells are attempted rather than how a cell is timed. The revision label
+therefore does not mark a change in what was measured, and we do not treat it
+as one. Driver and host are the real covariates, and they cannot be separated
+from device in this design: each device was measured on the host that had it.
+Neither label predicts disagreement. The L40 rows share driver 595.71.05 with
+A10 and A100 yet carry the later commit, and A10 against L40 flips on 0 of 36
+separated comparisons while H100 against L40, one commit and two drivers apart,
+flips on 9 of 33. What predicts the decode flip rate is which architectures are
+being compared, which is the decomposition reported in Section~\ref{sec:port}.
+A single-host replication of the whole grid would still be worth having, and we
+did not have six identical hosts. Prefill is clean in that sense: all six devices ran prefill at one commit.
 A100 prefill was however re-measured on a rented host, driver 580.126.16,
 after the cluster run reached only one usable process repeat, so that device's
 two regimes come from two hosts. No comparison crosses the boundary, since
