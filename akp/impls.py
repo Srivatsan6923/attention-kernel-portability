@@ -40,6 +40,19 @@ class Cfg:
     cache: str = "warm"    # "warm" | "cold"  -- L2 state at the start of a call
     causal: bool = True    # mathematical intent; see module docstring
 
+    def __post_init__(self):
+        # Decode is defined as one query attending to every cached key. There
+        # is no agreed spelling of "causal" at q_len=1: flash-attn's
+        # bottom-right alignment keeps all N keys, SDPA's top-left keeps only
+        # key 0, and _d2 hands cfg.causal straight to SDPA. Constructing such a
+        # config would silently compare two different functions, so refuse it
+        # here rather than discover it in a ranking.
+        if self.regime == "decode" and self.causal:
+            raise ValueError(
+                "decode with causal=True is ambiguous at q_len=1: SDPA would "
+                "attend to key 0 only while flash-attn attends to all N. "
+                "Decode cells must set causal=False.")
+
     @property
     def torch_dtype(self) -> torch.dtype:
         return DTYPES[self.dtype]

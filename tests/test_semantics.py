@@ -317,3 +317,64 @@ def test_impls_stay_finite_and_correct_on_adversarial_inputs(family, cfg,
             f"{res['baseline_max_abs_err']:.3e}")
         ran += 1
     assert ran >= 2, f"no implementations were exercised for {family!r}"
+
+
+# Decode reads the whole cache, asserted against the implementations.
+
+@pytest.mark.parametrize("where", ["first", "last"])
+def test_every_decode_impl_reads_the_named_cache_position(monkeypatch, where):
+    """Every decode path must depend on the same allowed keys.
+
+    test_decode_query_attends_to_every_cached_key pins the *reference*. This
+    pins the implementations, which is where the trap actually bites: D2-sdpa
+    forwards cfg.causal into SDPA, and SDPA's top-left is_causal at q_len=1
+    keeps only key 0. A path with that bug is fast and silently wrong.
+
+    V is zeroed except at one cache position, so the output is that position's
+    attention weight. Reading the whole cache gives a non-zero output at either
+    end; keeping only key 0 gives exactly zero when the live position is last.
+    """
+    from akp import impls as impls_mod
+
+    cfg = Cfg("decode", B=1, Hq=2, Hkv=2, D=64, N=16, causal=False)
+    j = 0 if where == "first" else cfg.N - 1
+    real = impls_mod.make_inputs
+
+    def one_live_position(c, device, seed=0, requires_grad=False):
+        t = real(c, device, seed=seed, requires_grad=requires_grad)
+        v = torch.zeros_like(t["v"])
+        v[:, :, j, :] = 1.0
+        t["v"] = v
+        return t
+
+    monkeypatch.setattr(impls_mod, "make_inputs", one_live_position)
+
+    info = dev_info()
+    checked = []
+    for impl in IMPLS.values():
+        if impl.regime != "decode" or not impl.supports(cfg, info):
+            continue
+        got = build_or_skip(impl, cfg)
+        if got is None:
+            continue
+        out = got[1].float()
+        assert torch.isfinite(out).all(), f"{impl.name} produced non-finite output"
+        assert out.abs().max() > 1e-6, (
+            f"{impl.name} ignored cache position {j} of {cfg.N}: output is all "
+            "zero when only that position carries value, so it is not "
+            "attending to every cached key")
+        checked.append(impl.name)
+
+    assert len(checked) >= 3, f"too few decode paths exercised: {checked}"
+
+
+def test_decode_refuses_a_causal_flag_it_would_mis_mask():
+    """causal=True at q_len=1 is not a decode configuration we can honour.
+
+    Every published decode row carries causal=False, so no result depends on
+    this. It is a guard against a future grid: SDPA would silently keep key 0
+    while flash_attn_with_kvcache would keep all N, and the two would be
+    compared as if they computed the same thing.
+    """
+    with pytest.raises(ValueError, match="causal"):
+        Cfg("decode", B=1, Hq=2, Hkv=2, D=64, N=8, causal=True)
