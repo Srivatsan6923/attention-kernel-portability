@@ -322,9 +322,13 @@ def usable(df: pd.DataFrame) -> pd.DataFrame:
 def per_cell_median(df: pd.DataFrame) -> pd.DataFrame:
     """Median per (gpu, cell, impl), keeping repeats for the bootstrap."""
     g = df.groupby(["gpu_name", "cell", "implementation"])
+    # repeat_ids travel with the samples so the bootstrap can resample whole
+    # process launches jointly across implementations rather than resampling
+    # each implementation's array on its own.
     return g.agg(median_us=("median_us", "median"),
                  reps=("median_us", "size"),
-                 samples=("median_us", list)).reset_index()
+                 samples=("median_us", list),
+                 repeat_ids=("repeat", list)).reset_index()
 
 
 def winners(cells: pd.DataFrame) -> pd.DataFrame:
@@ -350,15 +354,47 @@ def winner_flips(cells: pd.DataFrame) -> dict:
             "top1_stable": float((common == 1).mean())}
 
 
-def _boot_ratio(a, b, n=2000, seed=0):
-    """Cluster bootstrap over process repeats: reps inside one process
-    share clocks, allocator state and thermal point, so they are not
-    independent draws."""
+def _boot_ratio(a, b, n=2000, seed=0, ids_a=None, ids_b=None):
+    """Cluster bootstrap over process launches, on the reported estimator.
+
+    Two things this has to get right, and previously did not.
+
+    The point estimate is a ratio of MEDIANS of per-process medians, because
+    per_cell_median aggregates with median. Resampling the mean gave an
+    interval around a different statistic than the one being reported.
+
+    Both implementations were measured inside the same process launches, so a
+    launch is the cluster: resample launch ids once and index both arrays with
+    them. Drawing the two arrays independently throws the pairing away and
+    understates the drift they share, which is the whole reason the repeats
+    are process-level.
+
+    Falls back to independent resampling only when the two sides genuinely do
+    not share launches (unequal or disjoint ids), which happens when one
+    implementation was unsupported for part of a sweep.
+    """
     rng = np.random.default_rng(seed)
     a, b = np.asarray(a, float), np.asarray(b, float)
-    ra = rng.choice(a, (n, len(a)), replace=True).mean(1)
-    rb = rng.choice(b, (n, len(b)), replace=True).mean(1)
-    r = ra / rb
+    if len(a) == 0 or len(b) == 0:
+        return float("nan"), float("nan")
+
+    shared = None
+    if ids_a is not None and ids_b is not None:
+        ia = {v: i for i, v in enumerate(ids_a)}
+        ib = {v: i for i, v in enumerate(ids_b)}
+        keys = sorted(set(ia) & set(ib))
+        if len(keys) >= 2:
+            shared = (np.array([ia[k] for k in keys]),
+                      np.array([ib[k] for k in keys]))
+
+    if shared is not None:
+        pa, pb = a[shared[0]], b[shared[1]]
+        pick = rng.integers(0, len(pa), (n, len(pa)))
+        r = np.median(pa[pick], axis=1) / np.median(pb[pick], axis=1)
+    else:
+        ra = np.median(rng.choice(a, (n, len(a)), replace=True), axis=1)
+        rb = np.median(rng.choice(b, (n, len(b)), replace=True), axis=1)
+        r = ra / rb
     return np.percentile(r, 2.5), np.percentile(r, 97.5)
 
 
@@ -392,7 +428,8 @@ def stability(cells: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
-def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05) -> pd.DataFrame:
+def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05,
+               regime=None):
     """Pairs whose ordering flips between two GPUs.
 
     Statistical: signs differ and both bootstrap CIs exclude 1. Practical: both
@@ -404,8 +441,11 @@ def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05) -> pd.DataFrame:
     two devices into one and compare a device against itself.
     """
     out, examined = [], 0
+    ids = "repeat_ids" in cells.columns
     for cell in sorted(set(cells[cells.gpu_name == g1].cell)
                        & set(cells[cells.gpu_name == g2].cell)):
+        if regime and not cell.startswith(regime):
+            continue
         sub = cells[cells.cell == cell]
         s1 = sub[sub.gpu_name == g1].set_index("implementation")
         s2 = sub[sub.gpu_name == g2].set_index("implementation")
@@ -417,14 +457,27 @@ def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05) -> pd.DataFrame:
                 r2 = s2.median_us[a] / s2.median_us[b]
                 if np.sign(r1 - 1) == np.sign(r2 - 1):
                     continue
-                lo1, hi1 = _boot_ratio(s1.samples[a], s1.samples[b])
-                lo2, hi2 = _boot_ratio(s2.samples[a], s2.samples[b])
+                ka = dict(ids_a=s1.repeat_ids[a], ids_b=s1.repeat_ids[b]) if ids else {}
+                kb = dict(ids_a=s2.repeat_ids[a], ids_b=s2.repeat_ids[b]) if ids else {}
+                lo1, hi1 = _boot_ratio(s1.samples[a], s1.samples[b], **ka)
+                lo2, hi2 = _boot_ratio(s2.samples[a], s2.samples[b], **kb)
+                sig = bool((lo1 > 1 or hi1 < 1) and (lo2 > 1 or hi2 < 1))
+                practical = bool(max(r1, 1 / r1) >= PRACTICAL
+                                 and max(r2, 1 / r2) >= PRACTICAL)
                 out.append(dict(
-                    cell=cell, a=a, b=b, r1=r1, r2=r2, pairs_examined=examined,
-                    sig=(lo1 > 1 or hi1 < 1) and (lo2 > 1 or hi2 < 1),
-                    practical=(max(r1, 1 / r1) >= PRACTICAL
-                               and max(r2, 1 / r2) >= PRACTICAL)))
-    return pd.DataFrame(out)
+                    cell=cell, a=a, b=b, r1=r1, r2=r2,
+                    sig=sig, practical=practical,
+                    # An inversion required to be both must intersect the two
+                    # flags explicitly; they are independent conditions.
+                    sig_and_practical=sig and practical))
+    df = pd.DataFrame(out)
+    # The denominator is the count of pairs COMPARED, not the counter's value
+    # at the last inversion. Writing it after the loop makes every row carry
+    # the true total, and attrs carries it even when nothing inverted.
+    if len(df):
+        df["pairs_examined"] = examined
+    df.attrs["pairs_examined"] = examined
+    return df, examined
 
 
 def rank_correlation(cells: pd.DataFrame, g1: str, g2: str) -> dict:
@@ -652,14 +705,18 @@ def main(argv=None):
     pairs = {}
     for i, g1 in enumerate(gpus):
         for g2 in gpus[i + 1:]:
-            d = inversions(cells, g1, g2)
+            d, n_examined = inversions(cells, g1, g2)
             if len(d):
                 d["gpu_a"], d["gpu_b"] = g1, g2
                 inv.append(d)
-            pairs[g1 + " vs " + g2] = rank_correlation(cells, g1, g2)
-            if len(d):
-                pairs[g1 + " vs " + g2]["practical_inversion_rate"] = float(
-                    d.practical.sum() / d.pairs_examined.max())
+            key = g1 + " vs " + g2
+            pairs[key] = rank_correlation(cells, g1, g2)
+            # Recorded whether or not anything inverted: a pair with zero
+            # inversions has a rate of 0, not a missing rate.
+            pairs[key]["pairs_examined"] = int(n_examined)
+            pairs[key]["practical_inversions"] = int(d.practical.sum()) if len(d) else 0
+            pairs[key]["practical_inversion_rate"] = (
+                float(d.practical.sum() / n_examined) if n_examined else float("nan"))
     write("inversions.parquet",
           pd.concat(inv, ignore_index=True) if inv else pd.DataFrame())
 

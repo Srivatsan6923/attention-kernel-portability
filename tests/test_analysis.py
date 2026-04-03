@@ -74,3 +74,70 @@ if __name__ == "__main__":
     test_portability_scores_the_winner_at_one_and_drops_unshared_cells()
     test_cache_sensitivity_never_pairs_across_inner_k()
     print("ok")
+
+
+def test_inversion_denominator_counts_every_pair_compared():
+    """The denominator is pairs compared, not the counter at the last flip.
+
+    `examined` was written onto a row only when that pair inverted, so the
+    column held snapshots taken at inversion times and main() divided by the
+    last one. Two cells with one inversion between them reported 100% where
+    the truth is 50%. Order matters: the non-inverting cell sorts second, so
+    its comparison used to fall off the end of the denominator entirely.
+    """
+    rows = []
+    # cell(256): a faster on g1, b faster on g2 -> inverts, well past 10%.
+    rows += [("g1", "a", cell(256), 100.0), ("g1", "b", cell(256), 200.0),
+             ("g2", "a", cell(256), 200.0), ("g2", "b", cell(256), 100.0)]
+    # cell(512): a faster on both -> no inversion, and sorts AFTER cell(256).
+    rows += [("g1", "a", cell(512), 100.0), ("g1", "b", cell(512), 200.0),
+             ("g2", "a", cell(512), 100.0), ("g2", "b", cell(512), 200.0)]
+    d, examined = analysis.inversions(cells_frame(rows), "g1", "g2")
+
+    assert examined == 2, f"both pairs were compared, got {examined}"
+    assert len(d) == 1 and bool(d.practical.iloc[0])
+    assert float(d.practical.sum() / examined) == 0.5
+    assert int(d.pairs_examined.iloc[0]) == 2, "row must carry the final total"
+
+
+def test_inversion_denominator_survives_zero_inversions():
+    """With nothing inverting the frame is empty; the denominator is not."""
+    rows = [("g1", "a", cell(256), 100.0), ("g1", "b", cell(256), 200.0),
+            ("g2", "a", cell(256), 100.0), ("g2", "b", cell(256), 200.0)]
+    d, examined = analysis.inversions(cells_frame(rows), "g1", "g2")
+    assert len(d) == 0
+    assert examined == 1
+    assert d.attrs["pairs_examined"] == 1
+
+
+def test_sig_and_practical_are_intersected_explicitly():
+    """Requiring both conditions must use their intersection, not either one."""
+    rows = [("g1", "a", cell(256), 100.0), ("g1", "b", cell(256), 104.0),
+            ("g2", "a", cell(256), 104.0), ("g2", "b", cell(256), 100.0)]
+    d, _ = analysis.inversions(cells_frame(rows), "g1", "g2")
+    assert len(d) == 1
+    r = d.iloc[0]
+    # 4% apart: it inverts, but not past the 10% practical margin.
+    assert not bool(r.practical)
+    assert bool(r.sig_and_practical) == (bool(r.sig) and bool(r.practical))
+
+
+def test_boot_ratio_uses_the_median_and_pairs_process_launches():
+    """The interval must be built on the statistic that is reported.
+
+    per_cell_median ranks the median of per-process medians, so resampling the
+    mean put the interval around a different quantity. One large launch drags
+    a mean far more than a median, which is what this pins.
+    """
+    a = [100.0, 100.0, 100.0, 100.0, 400.0]   # one slow launch
+    b = [100.0] * 5
+    lo, hi = analysis._boot_ratio(a, b, ids_a=[0, 1, 2, 3, 4],
+                                 ids_b=[0, 1, 2, 3, 4])
+    # Median of a is 100 and of b is 100, so the ratio sits at 1 despite the
+    # outlier. A mean-based interval would sit near 1.6 and exclude 1.
+    assert lo <= 1.0 <= hi, f"median-based interval should cover 1, got [{lo}, {hi}]"
+
+    # Perfectly paired identical launches: the ratio is exactly 1 every draw.
+    lo2, hi2 = analysis._boot_ratio(b, b, ids_a=[0, 1, 2, 3, 4],
+                                   ids_b=[0, 1, 2, 3, 4])
+    assert lo2 == hi2 == 1.0
