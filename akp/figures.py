@@ -167,7 +167,13 @@ def winner_table(rows: pd.DataFrame) -> pd.DataFrame:
         if len(sub) > 1:
             r = sub.iloc[1]
             ratio = float(r.median_us / w.median_us)
-            lo, hi = _boot_ratio(r.samples, w.samples)
+            # Paired: both implementations were timed in the same process
+            # launches, so resample launches jointly. Dropping the ids here
+            # silently fell back to unpaired resampling and disagreed with
+            # the ledger's separation rate.
+            kw = (dict(ids_a=r.repeat_ids, ids_b=w.repeat_ids)
+                  if "repeat_ids" in sub.columns else {})
+            lo, hi = _boot_ratio(r.samples, w.samples, **kw)
             rec.update(runner_up=r.implementation, runner_up_us=float(r.median_us),
                        ratio=ratio, sig=bool(lo > 1 or hi < 1),
                        practical=bool(ratio >= PRACTICAL))

@@ -197,10 +197,16 @@ with at least one usable measurement.}
 
 A latency is evidence about a kernel only if that kernel is the one that ran, so
 we record the launched kernel names for every timed row and compare them with
-the implementation the harness asked for. Of the 41{,}865 passing rows, 25{,}541
+the implementation the harness asked for. Of the 54{,}213 passing rows, 36{,}054
 (66.5\%) captured a readable trace. Grouping by the tuple that determines
 dispatch, (implementation, GPU, head dimension, dtype, GQA ratio, mode, launch),
 gives 651 dispatch classes, 625 of them (96.0\%) with at least one probed row.
+The class is a backend-family unit and certifies only that: within a class the
+template specialisation does vary with batch, and 156 of the flash-family
+classes launch both \code{flash\_fwd\_splitkv\_combine} and \code{flash\_fwd},
+while the family the row was asked for is the same in every one of them.
+Class coverage is therefore not shape coverage, and the per-row figure above
+is the one to read for that.
 Among probed rows the requested kernel family is absent from the trace in 162
 cases, a mismatch rate of 0.449\%, or 0.299\% over every audited row. The
 unprobed 33.5\% count as unknown, never as agreement. Mismatches concentrate:
@@ -397,11 +403,15 @@ unknown, not zero.
 effective KV traffic to that host's measured peak copy bandwidth is 1.038, so
 the peak probe under-reads what the decode kernels sustain there. No L40 number
 should be read as a fraction of achievable bandwidth: the effective GB/s
-stands, the ratio does not. On H100 the CUDA-event overhead
-is 5.088 \us{} against a fastest usable cell of 6.34 \us{}, with 153 of its
-2{,}474 triples within 5$\times$ of the timer, so at the small-batch,
-short-context, CUDA-graph end of the decode grid a winner margin competes with
-timer resolution.
+stands, the ratio does not. On H100 the fastest usable cell is 6.34 \us{} and 153 of its 2{,}474 triples sit
+within 5$\times$ of the 5.088 \us{} CUDA-event pair overhead. That comparison
+crosses timers and we do not draw a floor from it: 152 of those 153 triples are
+\code{do\_bench\_cudagraph} cells, while 5.088 \us{} is a \code{block\_bench}
+event-pair cost. What the two together do establish is that at the small-batch,
+short-context, CUDA-graph end of the decode grid the winner margins are of the
+same order as the timing machinery, and we have not measured that end well
+enough to rank it. Those cells are reported and are not used to support any
+portability claim.
 
 \paragraph{What was not measured.} Every cloud host we rented blocked
 Nsight Compute and Nsight Systems, so no occupancy, cache-hit-rate or

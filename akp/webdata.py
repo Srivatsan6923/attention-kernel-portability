@@ -137,7 +137,9 @@ def main(argv=None):
         if len(s) > 1:
             ru = s.iloc[1]
             ratio = float(ru.median_us / w.median_us)
-            lo, hi = _boot_ratio(ru.samples, w.samples)
+            kw = (dict(ids_a=ru.repeat_ids, ids_b=w.repeat_ids)
+                  if "repeat_ids" in sub.columns else {})
+            lo, hi = _boot_ratio(ru.samples, w.samples, **kw)
             rec["ratio"] = r3(ratio)
             rec["runner_up"] = ru.implementation
             rec["sep"] = bool((lo > 1 or hi < 1) and ratio >= PRACTICAL)

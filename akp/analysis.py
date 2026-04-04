@@ -103,13 +103,20 @@ def derive(df: pd.DataFrame, env: dict | None = None) -> pd.DataFrame:
     df["sm_count"] = df.gpu_name.map(lambda g: (env or {}).get(g, {}).get("sm_count"))
     df["l2_bytes"] = df.gpu_name.map(lambda g: (env or {}).get(g, {}).get("l2_bytes"))
     df["peak_bw_gbs"] = peak
+    df["gate_status"] = gate_status(df)
 
-    # Working set: the tensors the math requires, Q and O at q_len, K and V at
-    # N. Hkv, not the expanded head count kv_bytes uses -- that one is traffic,
-    # this one is footprint, and the expansion is a view of one allocation.
+    # Working set: the tensors that are resident, Q and O at q_len, K and V at
+    # N. expand_kv calls repeat_interleave, not expand, so an implementation
+    # that takes the expanded path materialises a second, Hq-head copy and
+    # holds it alongside the compact cache. Charging it only Hkv attributed
+    # that copy to allocator overhead and made a fused decode path read as 5x
+    # over its own working set.
     from akp.impls import NAIVE_LIKE
+    gqa_mode = df.get("gqa_mode", pd.Series("native", index=df.index))
+    expanded = gqa_mode.fillna("native") == "expanded"
     qo = 2 * df.batch * df.hq * np.where(pre, df.seq_len, 1) * df.head_dim * itemsize
-    kv = 2 * df.batch * df.hkv * df.seq_len * df.head_dim * itemsize
+    kv_heads = df.hkv + np.where(expanded, df.hq, 0)
+    kv = 2 * df.batch * kv_heads * df.seq_len * df.head_dim * itemsize
     # Only the score-matrix impls materialise B*Hq*N*N. Charging it to the fused
     # kernels would hide the one thing that lets them fit.
     scores = np.where(df.implementation.isin(NAIVE_LIKE),
@@ -305,14 +312,36 @@ def usable(df: pd.DataFrame) -> pd.DataFrame:
         ok &= (throttle_bits(df) & ERRATIC_THROTTLE) == 0
     if "correctness_pass" in df:
         # The gate runs once per equivalence class, so most rows carry NaN.
-        # Disqualify the whole class its representative failed on -- otherwise a
-        # kernel that fails the gate loses one row and every other cell of that
-        # class still counts as correct.
-        ok &= df.correctness_pass.fillna(True)
-        if "gate_class" in df:
-            failed = set(df.loc[df.correctness_pass == False, "gate_class"].dropna())
-            ok &= ~df.gate_class.isin(failed)
+        # fillna(True) used to turn "no verdict" into "passed", which is the
+        # one thing a correctness gate must never do silently. gate_status
+        # names the three states, and only an actual failure disqualifies.
+        st = gate_status(df)
+        ok &= st != "fail"
     return df[ok]
+
+
+def gate_status(df: pd.DataFrame) -> pd.Series:
+    """pass / fail / ungated per row, propagated over the equivalence class.
+
+    The gate runs on one representative per (implementation, D, dtype, causal,
+    GQA, mode) class, so a verdict belongs to the class, not to the row that
+    happened to carry it. A class whose representative failed is disqualified
+    whole; a class that was never gated is "ungated", which is an absence of
+    evidence and is reported as such rather than counted as a pass.
+    """
+    st = pd.Series("ungated", index=df.index, dtype=object)
+    if "correctness_pass" not in df:
+        return st
+    if "gate_class" in df:
+        cls = df.gate_class
+        failed = set(df.loc[df.correctness_pass == False, "gate_class"].dropna())
+        passed = set(df.loc[df.correctness_pass == True, "gate_class"].dropna())
+        st[cls.isin(passed)] = "pass"
+        st[cls.isin(failed)] = "fail"      # failure wins over a sibling pass
+    else:
+        st[df.correctness_pass == True] = "pass"
+        st[df.correctness_pass == False] = "fail"
+    return st
 
 
 # --------------------------------------------------------------------------- #

@@ -176,21 +176,21 @@ Spearman/Kendall: within each shared cell, rank the implementations both devices
 
 | pair | shared cells | cells with >=3 common impls | Spearman (median) | Kendall (median) | impl pairs examined | practical inv. | practical rate | statistical inv. | statistical rate |
 |---|---|---|---|---|---|---|---|---|---|
-| A10 vs A100 | 335 | 333 | 0.886 | 0.733 | 4448 | 162 | 3.64% | 447 | 10.05% |
-| A10 vs NVIDIA GeForce RTX 5090 | 335 | 333 | 0.800 | 0.667 | 3686 | 115 | 3.12% | 470 | 12.75% |
-| A10 vs H100 | 335 | 333 | 0.800 | 0.600 | 4448 | 267 | 6.00% | 507 | 11.40% |
-| A10 vs L40 | 335 | 333 | 0.893 | 0.800 | 4448 | 78 | 1.75% | 430 | 9.67% |
-| A10 vs L40S | 335 | 333 | 0.821 | 0.714 | 4448 | 158 | 3.55% | 452 | 10.16% |
-| A100 vs NVIDIA GeForce RTX 5090 | 336 | 334 | 0.900 | 0.810 | 3864 | 162 | 4.19% | 339 | 8.77% |
-| A100 vs H100 | 336 | 336 | 0.857 | 0.714 | 4755 | 399 | 8.39% | 466 | 9.80% |
-| A100 vs L40 | 336 | 336 | 0.800 | 0.714 | 4755 | 151 | 3.18% | 542 | 11.40% |
-| A100 vs L40S | 336 | 336 | 0.786 | 0.619 | 4755 | 226 | 4.75% | 573 | 12.05% |
-| NVIDIA GeForce RTX 5090 vs H100 | 336 | 334 | 0.800 | 0.667 | 3864 | 289 | 7.48% | 523 | 13.54% |
-| NVIDIA GeForce RTX 5090 vs L40 | 336 | 334 | 0.800 | 0.667 | 3864 | 99 | 2.56% | 500 | 12.94% |
-| NVIDIA GeForce RTX 5090 vs L40S | 336 | 334 | 0.800 | 0.667 | 3864 | 164 | 4.24% | 514 | 13.30% |
-| H100 vs L40 | 336 | 336 | 0.707 | 0.600 | 4755 | 224 | 4.71% | 700 | 14.72% |
-| H100 vs L40S | 336 | 336 | 0.750 | 0.619 | 4755 | 193 | 4.06% | 599 | 12.60% |
-| L40 vs L40S | 336 | 336 | 0.929 | 0.810 | 4755 | 79 | 1.66% | 136 | 2.86% |
+| A10 vs A100 | 335 | 333 | 0.886 | 0.733 | 4448 | 162 | 3.64% | 458 | 10.30% |
+| A10 vs NVIDIA GeForce RTX 5090 | 335 | 333 | 0.800 | 0.667 | 3686 | 115 | 3.12% | 460 | 12.48% |
+| A10 vs H100 | 335 | 333 | 0.800 | 0.600 | 4448 | 267 | 6.00% | 457 | 10.27% |
+| A10 vs L40 | 335 | 333 | 0.893 | 0.800 | 4448 | 78 | 1.75% | 447 | 10.05% |
+| A10 vs L40S | 335 | 333 | 0.821 | 0.714 | 4448 | 158 | 3.55% | 396 | 8.90% |
+| A100 vs NVIDIA GeForce RTX 5090 | 336 | 334 | 0.900 | 0.810 | 3864 | 162 | 4.19% | 333 | 8.62% |
+| A100 vs H100 | 336 | 336 | 0.857 | 0.714 | 4755 | 399 | 8.39% | 440 | 9.25% |
+| A100 vs L40 | 336 | 336 | 0.800 | 0.714 | 4755 | 151 | 3.18% | 584 | 12.28% |
+| A100 vs L40S | 336 | 336 | 0.786 | 0.619 | 4755 | 226 | 4.75% | 527 | 11.08% |
+| NVIDIA GeForce RTX 5090 vs H100 | 336 | 334 | 0.800 | 0.667 | 3864 | 289 | 7.48% | 474 | 12.27% |
+| NVIDIA GeForce RTX 5090 vs L40 | 336 | 334 | 0.800 | 0.667 | 3864 | 99 | 2.56% | 502 | 12.99% |
+| NVIDIA GeForce RTX 5090 vs L40S | 336 | 334 | 0.800 | 0.667 | 3864 | 164 | 4.24% | 459 | 11.88% |
+| H100 vs L40 | 336 | 336 | 0.707 | 0.600 | 4755 | 224 | 4.71% | 650 | 13.67% |
+| H100 vs L40S | 336 | 336 | 0.750 | 0.619 | 4755 | 193 | 4.06% | 516 | 10.85% |
+| L40 vs L40S | 336 | 336 | 0.929 | 0.810 | 4755 | 79 | 1.66% | 103 | 2.17% |
 
 Smallest pair here is n=335 shared cells (A100 vs L40S), so no row falls under the n<50 threshold -- but the three L40S pairs rest on roughly a third the cells of the others and are prefill-only.
 
@@ -202,7 +202,7 @@ Both devices ran **prefill only**, so this floor is calibrated for prefill and i
 
 Pairs at or below the floor: none. Those are not usable as portability evidence.
 
-`inversions.parquet` stores `pairs_examined` as a running counter written only onto inverting pairs, so its maximum undercounts the true denominator slightly. The denominators above are recomputed exactly from `cells.parquet`; they differ from the stored maxima by at most 5 pairs (<0.14%), which moves no rate in the third decimal.
+`inversions.parquet` stores `pairs_examined` as a running counter written only onto inverting pairs, so its maximum undercounts the true denominator slightly. The denominators above are recomputed exactly from `cells.parquet`; they differ from the stored maxima by at most 0 pairs (<0.00%), which moves no rate in the third decimal.
 
 ## 5. Per-device winners
 
