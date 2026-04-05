@@ -47,15 +47,16 @@ Published attention benchmarks report a winner measured on one GPU. Does that
 winner survive a change of device? We time 10 prefill and 6 decode
 implementations over 403 configurations on six NVIDIA GPUs spanning sm80, sm86,
 sm89, sm90 and sm120, under one software distribution: torch 2.9.0+cu128, CUDA
-12.8, triton 3.5.0, flash-attn 2.8.3, flashinfer 0.6.18. Most configurations have no winner worth reporting: on 68.1\% of 2{,}082
-(device, configuration) pairs the fastest implementation is not separated from
-the runner-up by both a 10\% margin and a bootstrap interval excluding 1. Among
-those that are separated, prefill rankings do not transfer, flipping on 82 of
-144 paired comparisons, with all six devices measured at one harness commit.
-Decode rankings do transfer, and unevenly: pairs within Ampere and Ada flip
-on 5 of 145 separated comparisons while pairs involving Hopper flip on 21 of
-129. Decode agreement then collapses against the
-Blackwell part, at 64 of 84, and availability rather than
+12.8, triton 3.5.0, flash-attn 2.8.3, flashinfer 0.6.18. Most configurations have no winner worth reporting: the fastest backend is
+separated from the runner-up, by both a 10\% margin and a bootstrap interval
+excluding 1, on 29\% of 447 forward-prefill and 34\% of 1203 decode
+configurations. Among those that are separated, the fastest backend changes
+between devices on 27 of 64 forward-prefill comparisons and 29 of 289 decode
+comparisons within Ampere, Ada and Hopper. Changing winner is not the same as
+paying for it: transferring the source device's choice costs a median
+1.002$\times$ in prefill and 1.000$\times$ in decode, with 95th percentiles of
+1.61$\times$ and 1.32$\times$, and 14\% of source choices are unavailable on
+the target at all. Availability is where the comparison breaks down, at 63 of 85 decode comparisons against the RTX 5090, and availability rather than
 architecture accounts for 62 of those 64: FlashInfer, which wins 131 of 244
 decode configurations on H100, produced no timing at all on the RTX 5090,
 raising a compute-capability \code{RuntimeError} on 950 of 960 attempted rows. A
@@ -244,27 +245,23 @@ implementations are binned, not only cells every device ran.}
 
 \paragraph{Most cells have no decisive winner.} A winner counts as \emph{separated} only if the runner-up's median latency is
 at least 1.10 times the winner's and the cluster-bootstrap CI on that ratio
-excludes 1. By that criterion only 31.9\% of the 2{,}082 (device, cell) pairs with at
-least two usable implementations have a separated winner, 33.4\% in decode and
-29.8\% in prefill, and Figure~\ref{fig:winnermap} hatches every band where they
+excludes 1. By that criterion only 28.6\% of forward-prefill and 34.0\% of decode configurations have a
+separated winner (128 of 447 and 409 of 1203), and Figure~\ref{fig:winnermap} hatches every band where they
 are a minority. A flip between implementations within a few percent of each
 other is a coin toss reported as a result, so every rate below is computed
 twice, over all shared cells and over cells separated on both devices.
 
 \paragraph{The regime split.} Table~\ref{tab:flips} pools the ten device pairs
-among A10, A100, L40, L40S and H100. Restriction pulls the two regimes apart. Prefill
-barely moves, 82 of 144 comparisons still flip, so the disagreement survives the
-exclusion of ties, while decode drops to 26 of 274, consistent with most of the apparent decode
-disagreement being ties resolved differently on each device. That residual is
-not spread evenly. Pairs within Ampere and Ada flip on 5 of 145 separated
-comparisons, interval [1, 7], and pairs involving H100 on 21 of 129, interval
-[8, 26]. Decode rankings transfer well across Ampere and Ada and degrade once
-Hopper is one of the two devices.
+among A10, A100, L40, L40S and H100. Restriction pulls the two regimes apart. Forward prefill flips on 27 of 64 separated comparisons, interval [29, 53],
+while decode flips on 29 of 289, interval [5, 15]. Restricting each device
+pair to the backends both devices ran, and re-deriving winners and separation
+over that restricted set rather than filtering afterwards, moves prefill to 33 of
+72 and leaves decode at 29 of 289. The restriction is what controls for
+FlashAttention 3 existing only on H100 and FlashInfer being absent on the RTX
+5090, and it does not rescue prefill.
 
 \paragraph{The Blackwell collapse.} The lower half of Table~\ref{tab:flips}
-repeats the calculation for the five pairs including the RTX 5090. The decode
-rate does not
-fall under restriction, staying at 64 of 84, while prefill falls to 21 of 55.
+repeats the calculation for the five pairs including the RTX 5090. The decode rate stays high, at 63 of 85, while forward prefill is 16 of 30.
 What makes the 5090 disagree is therefore specific to decode, and
 Section~\ref{sec:mech} identifies it as availability, not architecture: in 62 of
 those 64 flips the winner on the other device is FlashInfer, which produced no
@@ -280,11 +277,11 @@ timing on the 5090.
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}
 device set & regime & n & flip & n & flip [95\% CI] \\
 \midrule
-\multirow{2}{*}{Amp/Ada/Hop} & prefill & 1440 & 61.8\% & 144 & 56.9\% [48, 65] \\
-                             & decode  & 1916 & 52.1\% & 274 &  9.5\% [4.7, 14] \\
+\multirow{2}{*}{Amp/Ada/Hop} & prefill & 720 & 66.0\% & 64 & 42.2\% [29, 53] \\
+                             & decode  & 1916 & 52.1\% & 289 & 10.0\% [5, 15] \\
 \midrule
-\multirow{2}{*}{5090 vs rest} & prefill &  720 & 53.5\% &  55 & 38.2\% [24, 55] \\
-                              & decode  &  959 & 78.4\% &  84 & 76.2\% [60, 90] \\
+\multirow{2}{*}{5090 vs rest} & prefill & 360 & 65.8\% & 30 & 53.3\% [30, 74] \\
+                              & decode  & 959 & 78.4\% & 85 & 74.1\% [56, 90] \\
 \bottomrule
 \end{tabular}
 \caption{Winner-flip rate, pooled over device pairs. \emph{Amp/Ada/Hop} pools
