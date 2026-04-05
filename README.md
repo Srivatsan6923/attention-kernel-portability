@@ -168,15 +168,20 @@ Six GPUs across four architecture families (sm80, sm86, sm89, sm90, sm120),
 medians, one software snapshot: torch 2.9.0+cu128, CUDA 12.8, triton 3.5.0,
 flash-attn 2.8.3, flashinfer 0.6.18.
 
-- **Most configurations have no decisive winner.** On 68.1% of them the fastest
-  implementation is not separated from the runner-up by both a 10% margin and a
-  bootstrap interval excluding 1.
-- **Decode rankings mostly transfer across Ampere, Ada and Hopper** (26 of 274
-  separated comparisons flip); **prefill rankings do not** (82 of 144).
-- **Decode agreement collapses against Blackwell** (64 of 84), and the cause is
-  availability rather than architecture: FlashInfer, the decode winner on most
-  other devices, raised a compute-capability error on 950 of 960 attempted rows
-  on the RTX 5090.
+- **Most configurations have no separated fastest backend.** The fastest path
+  clears both a 10% margin and a bootstrap interval excluding 1 on 29% of 447
+  forward-prefill and 34% of 1,203 decode configurations. The rest are not
+  proven equal; they simply did not meet the criterion.
+- **Decode rankings mostly transfer across Ampere, Ada and Hopper** (29 of 289
+  separated comparisons flip); **forward-prefill rankings do not** (27 of 64).
+- **RTX 5090 decode comparisons under the tested build** flip on 63 of 85
+  separated comparisons. In the recorded runs the FlashInfer path produced no
+  usable timing there: 950 of 960 attempts ended in a runtime error and the
+  remaining 10 ran out of memory, so how it would have performed on that device
+  could not be measured.
+- **A changed winner is usually cheap.** Carrying the source device's choice to
+  the target costs a median 1.000x in decode and 1.002x in forward prefill,
+  with p95 of 1.33x and 1.61x; 14% of source choices do not exist on the target.
 - **The wheels show the same asymmetry statically.** flash-attn 2.8.3 ships no
   sm_86 or sm_89 cubins and no PTX, so on those parts it runs sm_80 code
   (`scripts/provenance.sh`).

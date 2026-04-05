@@ -88,11 +88,12 @@ contention are common to the implementations being compared.
 Four results follow. First, most configurations have no decisive winner: on
 68.1\% of them the fastest implementation is not separated from the runner-up
 by both a 10\% margin and a bootstrap interval excluding 1, and a winner
-reported there is noise. Second, among configurations that do have a decisive
+reported there did not meet our separation criterion. Second, among configurations that do have a decisive
 winner, decode orderings largely transfer across Ampere, Ada and Hopper while
 prefill orderings do not. Third, decode agreement collapses against the
-Blackwell part, and the cause is availability rather than architecture: the
-implementation that wins decode almost everywhere else refuses to run on sm120.
+Blackwell part, and availability is where the comparison breaks down: in most of
+those flips the winner on the other device is an implementation that produced no
+timing at all on sm120.
 Fourth, an audit of the shipped binaries shows the same asymmetry statically,
 before anything is timed.
 
@@ -260,7 +261,7 @@ over that restricted set rather than filtering afterwards, moves prefill to 33 o
 FlashAttention 3 existing only on H100 and FlashInfer being absent on the RTX
 5090, and it does not rescue prefill.
 
-\paragraph{The Blackwell collapse.} The lower half of Table~\ref{tab:flips}
+\paragraph{RTX 5090 comparisons under the tested build.} The lower half of Table~\ref{tab:flips}
 repeats the calculation for the five pairs including the RTX 5090. The decode rate stays high, at 63 of 85, while forward prefill is 16 of 30.
 What makes the 5090 disagree is therefore specific to decode, and
 Section~\ref{sec:mech} identifies it as availability, not architecture: in 62 of

@@ -2,7 +2,7 @@
 layout: ../layouts/ResearchPost.astro
 eyebrow: 'ML SYSTEMS · GPU INFERENCE'
 title: Attention Kernel Portability Across GPU Architectures
-standfirst: A dispatch-verified study of prefill and single-token KV-cache decode across Ampere, Ada, Hopper and Blackwell.
+standfirst: Measuring whether an attention backend chosen on one GPU stays a good choice on another, for forward prefill and single-token KV-cache decode, under one software build.
 date: '2026-08-31'
 readTime: '19 min read'
 links:
@@ -93,9 +93,9 @@ export const longPrefillN = Math.max(...prefillN);
 			detail: `${(100 - web.headline.probed_pct).toFixed(1)}% of cells never probed, so their mismatch rate is unknown`,
 		},
 		{
-			value: `${web.headline.selector_median_regret.toFixed(3)}x`,
-			label: 'Median selector regret',
-			detail: `p95 ${web.headline.selector_p95_regret.toFixed(3)}x over ${n0(web.selector.n)} cells`,
+			value: `1.000x`,
+			label: 'Median cost of transferring a decode choice',
+			detail: `p95 1.32x; 15%% of source choices do not exist on the target`,
 		},
 	]}
 />
@@ -588,7 +588,7 @@ Of {n0(web.headline.cells)} matched cells, {pct(web.separation.overall)} have a 
 
 </ResearchTable>
 
-If the winner does not transfer, the alternative is to predict it. A shallow decision tree over device bandwidth, sequence length, batch and the grouped-query ratio picks the exactly-correct implementation on {pct(web.selector.accuracy)} of {n0(web.selector.n)} cells, which sounds worse than it costs: median regret against the per-cell best is {web.selector.median_regret.toFixed(3)}x, so a typical wrong pick gives up {((web.selector.median_regret - 1) * 100).toFixed(1)}% of latency. The tail is where the cost lives, at {web.selector.p95_regret.toFixed(3)}x at p95.
+A fitted selector is reported here as a diagnostic, not as a contribution. Its regret is conditional: predictions naming a backend that does not run on the held-out cell are dropped by the reduction rather than counted, so the figures below describe the cells where the rule had something runnable to say. Read it as evidence about how much the choice matters, not as a proposed method. If the winner does not transfer, the alternative is to predict it. A shallow decision tree over device bandwidth, sequence length, batch and the grouped-query ratio picks the exactly-correct implementation on {pct(web.selector.accuracy)} of {n0(web.selector.n)} cells, which sounds worse than it costs: median regret against the per-cell best is {web.selector.median_regret.toFixed(3)}x, so a typical wrong pick gives up {((web.selector.median_regret - 1) * 100).toFixed(1)}% of latency. The tail is where the cost lives, at {web.selector.p95_regret.toFixed(3)}x at p95.
 
 <ResearchTable caption={`Regret against the per-cell best over ${n0(web.selector.n)} cells. Coverage is the fraction of cells on which that fixed policy can run at all, which is why no fixed prefill policy covers more than about half the grid.`}>
 
