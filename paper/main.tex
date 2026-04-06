@@ -244,9 +244,45 @@ implementations are binned, not only cells every device ran.}
 \section{Portability}
 \label{sec:port}
 
+\begin{figure*}[tb]
+\centering
+\includegraphics[width=\textwidth]{figA_separation.pdf}
+\caption{How often a fastest backend is separated from the runner-up, by both a
+10\% margin on the runner-up/fastest ratio and a cluster-bootstrap interval on
+that ratio excluding 1. Counts are printed inside each bar; whiskers are 95\%
+intervals over cells. \emph{Observation:} the criterion is met on 128 of
+447 forward-prefill and 409 of 1203 decode configurations, and no device
+clears half in both regimes. \emph{Interpretation:} exact winner counts are
+sensitive to small timing differences over most of this grid. Configurations
+that fail the criterion are not shown to be equal; they are configurations
+where we could not establish a fastest backend.}
+\label{fig:sep}
+\end{figure*}
+
+\begin{figure*}[tb]
+\centering
+\includegraphics[width=\textwidth]{figB_transfer.pdf}
+\caption{Whether the selected backend transfers, and what it costs when it does
+not. \emph{Left:} winner-flip rate over device pairs among Ampere, Ada and
+Hopper, over each device's native backend set and over the set both devices of
+a pair ran, with winners and separation re-derived after restricting.
+\emph{Right:} the distribution of the target-device latency of the source
+device's chosen backend divided by the target's own best.
+\emph{Observation:} winners differ on 27 of 64 forward-prefill and 29
+of 289 decode comparisons, yet the median transfer costs 1.002$\times$ and
+1.000$\times$, with 95th percentiles of 1.61$\times$ and 1.32$\times$;
+14\% of source choices do not run on the target at all and are counted here
+rather than dropped. \emph{Interpretation:} a changed winner is usually not a
+changed outcome. The cost of carrying a choice across these devices lives in
+the tail and in availability, not at the median.}
+\label{fig:transfer}
+\end{figure*}
+
+
 \paragraph{Most cells have no decisive winner.} A winner counts as \emph{separated} only if the runner-up's median latency is
 at least 1.10 times the winner's and the cluster-bootstrap CI on that ratio
-excludes 1. By that criterion only 28.6\% of forward-prefill and 34.0\% of decode configurations have a
+excludes 1. By that criterion Figure~\ref{fig:sep} gives the rate per device. Pooled, only 28.6\% of
+forward-prefill and 34.0\% of decode configurations have a
 separated winner (128 of 447 and 409 of 1203), and Figure~\ref{fig:winnermap} hatches every band where they
 are a minority. A flip between implementations within a few percent of each
 other is a coin toss reported as a result, so every rate below is computed
@@ -257,7 +293,10 @@ among A10, A100, L40, L40S and H100. Restriction pulls the two regimes apart. Fo
 while decode flips on 29 of 289, interval [5, 15]. Restricting each device
 pair to the backends both devices ran, and re-deriving winners and separation
 over that restricted set rather than filtering afterwards, moves prefill to 33 of
-72 and leaves decode at 29 of 289. The restriction is what controls for
+72 and leaves decode at 29 of 289. Figure~\ref{fig:transfer} puts those rates beside what a flip costs: the
+median transferred choice is 1.002$\times$ the target's own best in prefill
+and 1.000$\times$ in decode, so most flips are between backends that are
+practically interchangeable on the target. The restriction is what controls for
 FlashAttention 3 existing only on H100 and FlashInfer being absent on the RTX
 5090, and it does not rescue prefill.
 
@@ -322,36 +361,8 @@ sm\_120 failure and not a cause: every other library in the audit carries native
 sm\_120 SASS built under the same CUDA 12.8, so a blanket claim that the toolkit
 cannot target sm\_120 is contradicted by the audit's own rows.
 
-\begin{table}[tb]
-\centering
-\small
-\setlength{\tabcolsep}{3pt}
-% Seven columns do not fit a column at \small; scale rather than shrink the
-% font, so this table keeps the same look as the other two.
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{lcccccc}
-\toprule
-library & sm\_80 & sm\_86 & sm\_89 & sm\_90 & sm\_120 & PTX \\
-\midrule
-flash-attn 2.8.3   & SASS & \emph{80} & \emph{80} & SASS & SASS & none \\
-libtorch\_cuda     & SASS & SASS & SASS & SASS & SASS & none \\
-cuDNN engines      & SASS & SASS & \emph{86} & SASS & SASS & sm\_120 \\
-cuBLAS             & SASS & SASS & \emph{86} & SASS & SASS & sm\_120 \\
-flashinfer 0.6.18  & JIT & JIT & JIT & JIT & none & n/a \\
-flash-attn 3       & n/f & n/f & n/f & n/f & n/f & n/f \\
-\bottomrule
-\end{tabular}}
-\caption{Binary provenance of the installed wheels, from \code{cuobjdump}, over
-the compute capabilities of the six devices. SASS means native machine code is
-present; \emph{PTX} is the embedded PTX a driver could compile where there is no
-cubin. An italic number means none was shipped and the target runs that older
-architecture's cubin under CUDA minor-version binary compatibility. JIT means
-the library ships no cubins and builds at run time, \emph{none} that this build
-produced no kernel there under CUDA 12.8, and \emph{n/f} that the audit found no
-such library, which for FlashAttention 3, a path that ran on H100, is a gap in
-the audit and not in the install.}
-\label{tab:prov}
-\end{table}
+\input{tab_avail}
+
 
 \section{Threats to validity}
 \label{sec:threats}
@@ -431,6 +442,45 @@ architectures for which the installed libraries ship native code. And a
 reported winner should carry the margin separating it from the runner-up,
 because on roughly two thirds of the configurations measured here there is no
 separation to report.
+
+\appendix
+\section{Binary provenance}
+\label{app:prov}
+The audit records which architectures the installed wheels carry native code
+for. It establishes artifact coverage, not a performance cause: no rebuild for
+a missing target was performed, and CUDA permits a cubin built for a lower minor
+compute capability to run on a higher one within a major version.
+
+\begin{table}[tb]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+% Seven columns do not fit a column at \small; scale rather than shrink the
+% font, so this table keeps the same look as the other two.
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcccccc}
+\toprule
+library & sm\_80 & sm\_86 & sm\_89 & sm\_90 & sm\_120 & PTX \\
+\midrule
+flash-attn 2.8.3   & SASS & \emph{80} & \emph{80} & SASS & SASS & none \\
+libtorch\_cuda     & SASS & SASS & SASS & SASS & SASS & none \\
+cuDNN engines      & SASS & SASS & \emph{86} & SASS & SASS & sm\_120 \\
+cuBLAS             & SASS & SASS & \emph{86} & SASS & SASS & sm\_120 \\
+flashinfer 0.6.18  & JIT & JIT & JIT & JIT & none & n/a \\
+flash-attn 3       & n/f & n/f & n/f & n/f & n/f & n/f \\
+\bottomrule
+\end{tabular}}
+\caption{Binary provenance of the installed wheels, from \code{cuobjdump}, over
+the compute capabilities of the six devices. SASS means native machine code is
+present; \emph{PTX} is the embedded PTX a driver could compile where there is no
+cubin. An italic number means none was shipped and the target runs that older
+architecture's cubin under CUDA minor-version binary compatibility. JIT means
+the library ships no cubins and builds at run time, \emph{none} that this build
+produced no kernel there under CUDA 12.8, and \emph{n/f} that the audit found no
+such library, which for FlashAttention 3, a path that ran on H100, is a gap in
+the audit and not in the install.}
+\label{tab:prov}
+\end{table}
 
 \bibliography{custom}
 

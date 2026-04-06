@@ -301,6 +301,28 @@ def main():
             attempted=int(len(sub)),
             **{k: int(v) for k, v in sub.status.value_counts().items()})
 
+    # ---------------------------------------------- backend availability
+    # Which comparisons are possible at all. "-" means the device never
+    # attempted that backend, "." that it attempted and produced no usable
+    # row, "Y" that it did. Runtime failure, absent support and a memory
+    # limit are counted separately because they are different facts.
+    dev = {g: short(g) for g in gpus}
+    order = sorted(dev.values())
+    avail = []
+    for (impl, reg), sub in rows.groupby(["implementation", "regime"]):
+        st = sub.status.value_counts()
+        gq = sorted(set(sub.get("gqa_mode", pd.Series(dtype=object)).dropna()))
+        flags = ""
+        for g in order:
+            sd = sub[sub.gpu_name.map(dev) == g]
+            flags += "Y" if (sd.status == "OK").any() else ("." if len(sd) else "-")
+        avail.append(dict(
+            backend=impl, regime=reg, gqa="/".join(gq) or "n/a", support=flags,
+            ok=int(st.get("OK", 0)), unsupported=int(st.get("UNSUPPORTED", 0)),
+            error=int(st.get("ERROR", 0)),
+            oom=int(st.get("OOM", 0)) + int(st.get("OOM_PREDICTED", 0))))
+    L["backend_availability"] = dict(device_order=order, rows=avail)
+
     out_json = os.path.join(proc, "ledger.json")
     json.dump(L, open(out_json, "w", encoding="utf8"), indent=2, default=float)
 

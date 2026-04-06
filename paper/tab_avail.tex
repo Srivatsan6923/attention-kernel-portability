@@ -1,0 +1,35 @@
+\begin{table}[tb]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lllrrrr}
+\toprule
+backend & regime & GQA & support & OK & unsup. & fail \\
+\midrule
+D0-naive-kv & dec & both & \texttt{YYYYYY} & 5530 & 0 & 10 \\
+D1-inductor & dec & expanded & \texttt{YYYYYY} & 194 & 5346 & 0 \\
+D2-sdpa & dec & native & \texttt{YYYYYY} & 5535 & 0 & 5 \\
+D3-fa-kvcache & dec & native & \texttt{YYYYYY} & 5515 & 0 & 25 \\
+D4-flashinfer & dec & native & \texttt{YYYYY.} & 4565 & 0 & 975 \\
+D6-fa-prefill-at-1 & dec & native & \texttt{YYYYYY} & 5515 & 0 & 25 \\
+P0-naive & pre & both & \texttt{YYYYYY} & 3148 & 0 & 851 \\
+P1-inductor & pre & both & \texttt{YYYYYY} & 3209 & 0 & 790 \\
+P1-inductor-nofuse & pre & both & \texttt{YYYYYY} & 121 & 3873 & 5 \\
+P1-inductor-where & pre & both & \texttt{YYYYYY} & 121 & 3873 & 5 \\
+P2b-sdpa-mem-eff & pre & native & \texttt{YYYYYY} & 3969 & 30 & 0 \\
+P2c-sdpa-flash & pre & native & \texttt{YYYYYY} & 3999 & 0 & 0 \\
+P2d-sdpa-cudnn & pre & native & \texttt{YYYYYY} & 3999 & 0 & 0 \\
+P3-triton & pre & both & \texttt{YYYYYY} & 3999 & 0 & 0 \\
+P4-fa2 & pre & native & \texttt{YYYYYY} & 3999 & 0 & 0 \\
+P4h-fa3 & pre & native & \texttt{..Y...} & 795 & 3204 & 0 \\
+\bottomrule
+\end{tabular}
+\caption{Which comparisons are possible at all. \emph{support} is one character
+per device in the order A10, A100, H100, L40, L40S, RTX 5090: \texttt{Y} produced at least one
+usable row there, \texttt{.} attempted and produced none, \texttt{-} never attempted.
+\emph{unsup.} counts configurations the backend declined in advance and \emph{fail}
+runtime errors plus allocations refused or hit. FlashInfer reads \texttt{YYYYY.}: it ran
+on five devices and produced no timing on the RTX 5090. FlashAttention 3 reads
+\texttt{..Y...}, H100 only, by construction.}
+\label{tab:avail}
+\end{table}
