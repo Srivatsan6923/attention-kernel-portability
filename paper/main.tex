@@ -85,12 +85,13 @@ Every claim is a within-device ordering compared across devices, never a claim
 that one device is faster than another, so host effects such as clock drift and
 contention are common to the implementations being compared.
 
-Four results follow. First, most configurations have no decisive winner: on
-68.1\% of them the fastest implementation is not separated from the runner-up
-by both a 10\% margin and a bootstrap interval excluding 1, and a winner
-reported there did not meet our separation criterion. Second, among configurations that do have a decisive
-winner, decode orderings largely transfer across Ampere, Ada and Hopper while
-prefill orderings do not. Third, decode agreement collapses against the
+Four results follow. First, most configurations have no decisive winner: the
+fastest backend is separated from the runner-up, by both a 10\% margin and a
+bootstrap interval excluding 1, on only 29\% of 447 forward-prefill
+and 34\% of 1203 decode configurations, and the rest are not shown to be
+equal, only undecided. Second, among configurations that are separated, decode
+orderings largely transfer across Ampere, Ada and Hopper while forward-prefill
+orderings do not. Third, decode agreement collapses against the
 Blackwell part, and availability is where the comparison breaks down: in most of
 those flips the winner on the other device is an implementation that produced no
 timing at all on sm120.
