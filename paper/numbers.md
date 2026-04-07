@@ -35,7 +35,7 @@ Rows surviving `usable()` -- status OK, no erratic throttle bit set, correctness
 | A10 | prefill | 916 | 144 | 9 |
 | A100 | decode | 966 | 192 | 6 |
 | A100 | prefill | 966 | 144 | 9 |
-| NVIDIA GeForce RTX 5090 | decode | 769 | 192 | 5 |
+| NVIDIA GeForce RTX 5090 | decode | 746 | 192 | 5 |
 | NVIDIA GeForce RTX 5090 | prefill | 948 | 144 | 9 |
 | H100 | decode | 1232 | 244 | 6 |
 | H100 | prefill | 1242 | 159 | 10 |
@@ -49,7 +49,7 @@ Rows surviving `usable()` -- status OK, no erratic throttle bit set, correctness
 | measured rows | 73230 | `len(rows.parquet)` |
 | distinct cells (union of both regimes) | 403 | `rows.cell.nunique()` |
 | (GPU, cell, impl) triples attempted | 16014 | groupby on rows.parquet |
-| (GPU, cell, impl) triples usable | 11858 | `len(cells.parquet)` = 74.0% of attempted |
+| (GPU, cell, impl) triples usable | 11835 | `len(cells.parquet)` = 73.9% of attempted |
 | devices with measured rows | 6 | A10, A100, NVIDIA GeForce RTX 5090, H100, L40, L40S |
 | compute capabilities covered | 5 | 12.0, 8.0, 8.6, 8.9, 9.0 |
 | prefill implementations | 10 | P0/P1x3/P2bx1/P2c/P2d/P3/P4/P4h |
@@ -76,7 +76,7 @@ Event-timer overhead is the floor under every latency on that device. The table 
 |---|---|---|---|---|---|
 | A10 | 10.272 | 36.04 | 3.5x | 38 | 1871 |
 | A100 | 9.552 | 34.31 | 3.6x | 38 | 1932 |
-| NVIDIA GeForce RTX 5090 | 2.080 | 10.17 | 4.9x | 5 | 1717 |
+| NVIDIA GeForce RTX 5090 | 2.080 | 10.17 | 4.9x | 5 | 1694 |
 | H100 | 5.088 | 6.34 | 1.2x | 153 | 2474 |
 | L40 | 6.624 | 19.14 | 2.9x | 96 | 1932 |
 | L40S | 6.656 | 19.76 | 3.0x | 20 | 1932 |
@@ -177,17 +177,17 @@ Spearman/Kendall: within each shared cell, rank the implementations both devices
 | pair | shared cells | cells with >=3 common impls | Spearman (median) | Kendall (median) | impl pairs examined | practical inv. | practical rate | statistical inv. | statistical rate |
 |---|---|---|---|---|---|---|---|---|---|
 | A10 vs A100 | 335 | 333 | 0.886 | 0.733 | 4448 | 162 | 3.64% | 458 | 10.30% |
-| A10 vs NVIDIA GeForce RTX 5090 | 335 | 333 | 0.800 | 0.667 | 3686 | 115 | 3.12% | 460 | 12.48% |
+| A10 vs NVIDIA GeForce RTX 5090 | 335 | 333 | 0.800 | 0.667 | 3617 | 115 | 3.18% | 460 | 12.72% |
 | A10 vs H100 | 335 | 333 | 0.800 | 0.600 | 4448 | 267 | 6.00% | 457 | 10.27% |
 | A10 vs L40 | 335 | 333 | 0.893 | 0.800 | 4448 | 78 | 1.75% | 447 | 10.05% |
 | A10 vs L40S | 335 | 333 | 0.821 | 0.714 | 4448 | 158 | 3.55% | 396 | 8.90% |
-| A100 vs NVIDIA GeForce RTX 5090 | 336 | 334 | 0.900 | 0.810 | 3864 | 162 | 4.19% | 333 | 8.62% |
+| A100 vs NVIDIA GeForce RTX 5090 | 336 | 334 | 0.900 | 0.810 | 3795 | 162 | 4.27% | 333 | 8.77% |
 | A100 vs H100 | 336 | 336 | 0.857 | 0.714 | 4755 | 399 | 8.39% | 440 | 9.25% |
 | A100 vs L40 | 336 | 336 | 0.800 | 0.714 | 4755 | 151 | 3.18% | 584 | 12.28% |
 | A100 vs L40S | 336 | 336 | 0.786 | 0.619 | 4755 | 226 | 4.75% | 527 | 11.08% |
-| NVIDIA GeForce RTX 5090 vs H100 | 336 | 334 | 0.800 | 0.667 | 3864 | 289 | 7.48% | 474 | 12.27% |
-| NVIDIA GeForce RTX 5090 vs L40 | 336 | 334 | 0.800 | 0.667 | 3864 | 99 | 2.56% | 502 | 12.99% |
-| NVIDIA GeForce RTX 5090 vs L40S | 336 | 334 | 0.800 | 0.667 | 3864 | 164 | 4.24% | 459 | 11.88% |
+| NVIDIA GeForce RTX 5090 vs H100 | 336 | 334 | 0.800 | 0.667 | 3795 | 281 | 7.40% | 472 | 12.44% |
+| NVIDIA GeForce RTX 5090 vs L40 | 336 | 334 | 0.800 | 0.667 | 3795 | 99 | 2.61% | 498 | 13.12% |
+| NVIDIA GeForce RTX 5090 vs L40S | 336 | 334 | 0.800 | 0.667 | 3795 | 164 | 4.32% | 458 | 12.07% |
 | H100 vs L40 | 336 | 336 | 0.707 | 0.600 | 4755 | 224 | 4.71% | 650 | 13.67% |
 | H100 vs L40S | 336 | 336 | 0.750 | 0.619 | 4755 | 193 | 4.06% | 516 | 10.85% |
 | L40 vs L40S | 336 | 336 | 0.929 | 0.810 | 4755 | 79 | 1.66% | 103 | 2.17% |
@@ -260,7 +260,7 @@ Spread = `max(median_us) / min(median_us)` over the implementations that produce
 
 | regime | n (device,cell) pairs | median spread | p90 | p95 | max |
 |---|---|---|---|---|---|
-| decode | 1203 | 3.18x | 5.0x | 7.4x | 17.4x |
+| decode | 1203 | 3.14x | 5.0x | 7.4x | 17.4x |
 | prefill | 879 | 10.71x | 33.6x | 41.4x | 78.5x |
 
 | GPU | regime | n cells | median spread | p95 | max | median impls per cell |
@@ -269,7 +269,7 @@ Spread = `max(median_us) / min(median_us)` over the implementations that produce
 | A10 | prefill | 144 | 6.83x | 28.1x | 34.9x | 7.0 |
 | A100 | decode | 192 | 3.40x | 5.6x | 16.1x | 5.0 |
 | A100 | prefill | 144 | 12.80x | 45.1x | 47.8x | 7.0 |
-| NVIDIA GeForce RTX 5090 | decode | 192 | 2.10x | 4.5x | 5.7x | 4.0 |
+| NVIDIA GeForce RTX 5090 | decode | 192 | 1.25x | 4.4x | 5.7x | 4.0 |
 | NVIDIA GeForce RTX 5090 | prefill | 144 | 7.82x | 30.2x | 39.6x | 7.0 |
 | H100 | decode | 244 | 3.01x | 4.9x | 15.7x | 5.0 |
 | H100 | prefill | 159 | 11.65x | 40.8x | 59.6x | 8.0 |
@@ -278,14 +278,14 @@ Spread = `max(median_us) / min(median_us)` over the implementations that produce
 | L40S | decode | 192 | 3.94x | 11.2x | 16.6x | 5.0 |
 | L40S | prefill | 144 | 15.28x | 53.6x | 78.5x | 7.0 |
 
-Safe headline: **prefill spread is a median 10.7x, decode 3.18x** (n=879 and n=1203 device-cell pairs). Read it as 'the choice of implementation matters roughly 3.4x more in prefill than in decode', not as one kernel being 11x faster than another everywhere.
+Safe headline: **prefill spread is a median 10.7x, decode 3.14x** (n=879 and n=1203 device-cell pairs). Read it as 'the choice of implementation matters roughly 3.4x more in prefill than in decode', not as one kernel being 11x faster than another everywhere.
 
 Absolute anchors, so no spread is ever quoted as a bare ratio:
 
 | regime | n triples | fastest | p25 | median | p75 | slowest |
 |---|---|---|---|---|---|---|
 | prefill | 6004 | 14.8 us | 345.0 us | 1586.2 us | 8769.8 us | 8.05 s |
-| decode | 5854 | 6.3 us | 94.5 us | 290.8 us | 1011.4 us | 43304.3 us |
+| decode | 5831 | 6.3 us | 94.5 us | 290.4 us | 996.1 us | 43304.3 us |
 
 The prefill tail is the `fwd_bwd` end of the grid, not the naive kernel: the slowest usable measurement in the dataset is **P3-triton on A100 at 8.05 s** (`prefill|B16|Hq32|Hkv32|D128|N8192|fp16|fwd_bwd|eager|warm|c1`). Quote a spread beside the pair of latencies it came from, never on its own.
 
@@ -411,7 +411,7 @@ Against standing on one fixed implementation everywhere. The analysis drops any 
 
 | fixed policy | coverage of held-out cells | n cells | fixed median latency | selector median latency on those cells | median speedup | p95 speedup |
 |---|---|---|---|---|---|---|
-| D0-naive-kv | 57.0% | 766 | 602.2 us | 240.9 us | 3.172x | 8.358x |
+| D0-naive-kv | 55.3% | 743 | 609.6 us | 306.2 us | 3.150x | 8.530x |
 | D6-fa-prefill-at-1 | 56.8% | 763 | 356.5 us | 240.9 us | 1.249x | 4.227x |
 | D2-sdpa | 57.1% | 767 | 317.9 us | 240.9 us | 1.026x | 1.512x |
 | D3-fa-kvcache | 56.8% | 763 | 316.3 us | 240.9 us | 1.000x | 1.332x |
@@ -479,7 +479,7 @@ The unit of variation is the **per-process median**, not the individual rep: rep
 | A10 | prefill | 916 | 916 | 5 | 0.0125 | 0.0932 | 0.0096 | 0.0718 |
 | A100 | decode | 966 | 966 | 5 | 0.0511 | 0.3066 | 0.0397 | 0.2584 |
 | A100 | prefill | 966 | 966 | 5 | 0.0062 | 0.1600 | 0.0047 | 0.1256 |
-| NVIDIA GeForce RTX 5090 | decode | 769 | 769 | 5 | 0.0021 | 0.0268 | 0.0016 | 0.0207 |
+| NVIDIA GeForce RTX 5090 | decode | 746 | 746 | 5 | 0.0021 | 0.0269 | 0.0016 | 0.0207 |
 | NVIDIA GeForce RTX 5090 | prefill | 948 | 948 | 5 | 0.0032 | 0.1302 | 0.0025 | 0.0911 |
 | H100 | decode | 1232 | 1232 | 5 | 0.0231 | 0.3881 | 0.0178 | 0.2756 |
 | H100 | prefill | 1242 | 1242 | 5 | 0.0319 | 0.4915 | 0.0244 | 0.4251 |
@@ -492,12 +492,12 @@ The unit of variation is the **per-process median**, not the individual rep: rep
 |---|---|---|---|---|---|---|
 | A10 | 1871 | 1871 | 0.0109 | 0.0699 | 0.0082 | 0.0530 |
 | A100 | 1932 | 1932 | 0.0248 | 0.2489 | 0.0185 | 0.2020 |
-| NVIDIA GeForce RTX 5090 | 1717 | 1717 | 0.0026 | 0.0525 | 0.0020 | 0.0389 |
+| NVIDIA GeForce RTX 5090 | 1694 | 1694 | 0.0026 | 0.0535 | 0.0020 | 0.0393 |
 | H100 | 2474 | 2474 | 0.0260 | 0.4612 | 0.0195 | 0.3474 |
 | L40 | 1932 | 1931 | 0.0038 | 0.0550 | 0.0030 | 0.0409 |
 | L40S | 1932 | 1932 | 0.0197 | 0.3353 | 0.0149 | 0.2526 |
 
-**1 of 11858 usable triples have a single process repeat**, so they have no CV at all and a bootstrap CI of width 0 (1 on L40).
+**1 of 11835 usable triples have a single process repeat**, so they have no CV at all and a bootstrap CI of width 0 (1 on L40).
 At 0.01% of triples they cannot move an aggregate, so the CI figures below are precision measurements rather than artefacts.
 
 Safe headline, restricted to the device-regimes that genuinely have 5 process repeats: between-process CV is a median **0.0109** on A10 (n=1871 triples), **0.0511** on A100 decode (n=966) and **0.0260** on H100 (n=2474).
@@ -528,12 +528,12 @@ H100 is the noisiest device in the set at the tail -- p95 CV **0.461** and p95 r
 | Anything about L40S standalone | Prefill only, 5 process repeats, 144 of 159 prefill cells, 0 of 1932 usable triples single-process. Sound as the L40 twin control; not a standalone device result. | 101 cells |
 | L40 decode bandwidth utilisation (median 1.038) | Exceeds 1.0, so the measured-peak probe under-reads L40 rather than the kernels exceeding hardware. The ratio is not a utilisation. Quote effective GB/s, or re-measure peak bandwidth on that part. | 2414 rows |
 | Cold-L2 cache sensitivity | **H100 only**, 56 paired measurements, median sensitivity -0.030 -- i.e. cold measures *faster* than warm, which is a pairing artefact, not a result. No other device produced a cold/warm pair at a matching `inner_k`. | 56 pairs |
-| Selector 'vs fixed policy' speedups | Each row is scored on a different set of cells, namely the cells that policy's implementation actually ran, so the rows are not comparable with one another and no row is a statement about the whole held-out set. 4 policies survive the >50% coverage filter (D0-naive-kv, D6-fa-prefill-at-1, D2-sdpa, D3-fa-kvcache). Against the strongest of them the median speedup is 1.026x and 1.000x, i.e. a wash. Never quote the headline speedup without naming the policy it beats and both absolute latencies. | 766 held-out cells |
+| Selector 'vs fixed policy' speedups | Each row is scored on a different set of cells, namely the cells that policy's implementation actually ran, so the rows are not comparable with one another and no row is a statement about the whole held-out set. 4 policies survive the >50% coverage filter (D0-naive-kv, D6-fa-prefill-at-1, D2-sdpa, D3-fa-kvcache). Against the strongest of them the median speedup is 1.026x and 1.000x, i.e. a wash. Never quote the headline speedup without naming the policy it beats and both absolute latencies. | 743 held-out cells |
 | H100 decode latencies below ~25 us | H100's event overhead is 5.088 us and its fastest usable cell is 6.34 us -- **1.2x overhead**. 153 of 2474 H100 triples sit within 5x of the timer. The fastest of them (D4-flashinfer, `decode\|B1\|Hq32\|Hkv32\|D64\|N512\|fp16\|fwd\|cudagraph\|warm\|c0`) is also a winner cell, so at the small-B, small-N, cudagraph end the winner margin is competing with timer resolution. Report those cells with the overhead beside them or exclude them. | 153 triples |
 | Selector top-1 accuracy (38.5%) | Reads as a failure but is not the quantity of interest -- median regret is 1.018. Lead with regret; if accuracy appears at all, put regret beside it. | 1343 held-out cells |
 | 'torch.compile does not rewrite naive attention into SDPA' | The **counter** claim is solid (0 on 3645 rows). The stronger claim is not: 45 probed inductor rows on H100 do carry a flash kernel in the trace. Say 'Inductor's `fuse_attention` counter never fired'. | 3645 rows |
 | Dispatch mismatch rate | 0.449% among probed rows but 0.299% over all audited rows -- state the denominator. 33.5% of OK rows were never probed, so the rate on unprobed rows is **unknown**, not zero. | 36054 probed of 54213 |
-| Spread quoted as a cross-regime ratio | Prefill 10.7x against decode 3.18x compares different implementation sets (10 vs 6) over different cells and different lengths. It is a statement about how much the *choice* matters per regime, not about any kernel's speed. | 879 / 1203 device-cell pairs |
+| Spread quoted as a cross-regime ratio | Prefill 10.7x against decode 3.14x compares different implementation sets (10 vs 6) over different cells and different lengths. It is a statement about how much the *choice* matters per regime, not about any kernel's speed. | 879 / 1203 device-cell pairs |
 | Any pairwise inversion rate at or below the same-architecture floor | The L40 vs L40S control already shows 1.66% practical inversions at Spearman 0.929. No other pair sits at or below that floor and is therefore not evidence of architectural disagreement. The floor is calibrated on prefill only, so decode has no established floor at all. | 4755 impl pairs (control) |
 
 ### C. Wording discipline these numbers do not license

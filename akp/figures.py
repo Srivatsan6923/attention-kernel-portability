@@ -37,7 +37,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 from matplotlib.ticker import NullFormatter
 
-from akp.analysis import PRACTICAL, _boot_ratio, per_cell_median, usable
+from akp.analysis import (PRACTICAL, paired_ratio_ci, per_cell_median, usable)
 # ponytail: the dashboard already owns the colour map and the cell-key parser,
 # so the paper and the dashboard cannot drift. Cost is a streamlit import.
 from dashboard._data import COLOURS, cell_key, short_gpu
@@ -167,16 +167,15 @@ def winner_table(rows: pd.DataFrame) -> pd.DataFrame:
         if len(sub) > 1:
             r = sub.iloc[1]
             ratio = float(r.median_us / w.median_us)
-            # Paired: both implementations were timed in the same process
-            # launches, so resample launches jointly. Dropping the ids here
-            # silently fell back to unpaired resampling and disagreed with
-            # the ledger's separation rate.
+            # Paired over process launches, with ratio and interval taken
+            # from one population, and separation requiring lo > 1.
             kw = (dict(ids_a=r.repeat_ids, ids_b=w.repeat_ids)
                   if "repeat_ids" in sub.columns else {})
-            lo, hi = _boot_ratio(r.samples, w.samples, **kw)
+            ratio, lo, hi, n_launch = paired_ratio_ci(r.samples, w.samples, **kw)
             rec.update(runner_up=r.implementation, runner_up_us=float(r.median_us),
-                       ratio=ratio, sig=bool(lo > 1 or hi < 1),
-                       practical=bool(ratio >= PRACTICAL))
+                       ratio=ratio, n_launch=int(n_launch),
+                       sig=bool(np.isfinite(lo) and lo > 1),
+                       practical=bool(np.isfinite(ratio) and ratio >= PRACTICAL))
         else:
             rec.update(runner_up=None, runner_up_us=np.nan, ratio=np.nan,
                        sig=False, practical=False)

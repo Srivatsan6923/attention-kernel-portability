@@ -10,6 +10,39 @@ Blackwell and between prefill and decode, with every measurement gated on
 numerical correctness and on a check that the kernel which ran is the kernel
 that was requested.
 
+## Results
+
+Six GPUs across four architecture families (sm80, sm86, sm89, sm90, sm120),
+**73,230 attempt records** of which 54,098 ran, passed the correctness gate for
+their device and class, and entered a ranking; they collapse to 11,835 usable
+(GPU, configuration, backend) medians. Fixed library versions across the
+recorded GPU and host environments: torch 2.9.0+cu128, CUDA 12.8, triton 3.5.0,
+flash-attn 2.8.3, flashinfer 0.6.18. Host and driver differences are not
+isolated from GPU differences: each device was measured on the host that had
+it.
+
+- **Most configurations have no separated fastest backend.** The fastest path
+  clears both a 10% margin and a bootstrap interval excluding 1 on 29% of 447
+  forward-prefill and 34% of 1,203 decode configurations. The rest are not
+  proven equal; they simply did not meet the criterion.
+- **Among comparisons meeting the separation criterion on both GPUs, winner
+  changes were more frequent in forward prefill (27 of 64) than in decode
+  (29 of 289).**
+- **RTX 5090 decode comparisons under the tested build** flip on 63 of 85
+  separated comparisons. In the recorded runs the FlashInfer path produced no
+  usable timing there: 950 of 960 attempts ended in a runtime error and the
+  remaining 10 ran out of memory, so how it would have performed on that device
+  could not be measured.
+- **A changed winner is usually cheap.** Carrying the source device's choice to
+  the target costs a median 1.000x in decode and 1.002x in forward prefill,
+  with p95 of 1.33x and 1.61x; 14% of source choices do not exist on the target.
+- **The wheels show the same asymmetry statically.** flash-attn 2.8.3 ships no
+  sm_86 or sm_89 cubins and no PTX, so on those parts it runs sm_80 code
+  (`scripts/provenance.sh`).
+
+`paper/` holds the preprint and `paper/numbers.md` traces every number in it
+back to the code that produced it. `site/` is the long-form write-up.
+
 ## Why the dispatch check matters
 
 A benchmark can call `flash_attn_func` and measure something else entirely: a
@@ -20,11 +53,14 @@ observed backend is reconciled in analysis rather than assumed.
 Two things this caught, first on the development GPU and then across the full
 six-device sweep:
 
-- **TorchInductor does not rewrite naive attention into SDPA.**
+- **TorchInductor's `fuse_attention` counter never fired.**
   `counters["inductor"]["fuse_attention"] == 0` for all three compiled variants,
   including the `torch.where` spelling that `_sfdp_pattern_18/19` are written
   against. Across the finished dataset, 3,645 of 17,537 Inductor rows captured
-  the counter and it is 0 on every one of them, on all six devices. Inductor fuses the softmax epilogue into its own Triton kernel, 3
+  the counter and it is 0 on every one of them, on all six devices. This is a
+  statement about that counter, not a general claim that Inductor cannot
+  rewrite attention: 45 probed Inductor rows, all on H100, do carry a flash
+  kernel in their trace. Inductor fuses the softmax epilogue into its own Triton kernel, 3
   launched kernels against the naive path's 8, but keeps both GEMMs and still
   materializes the N×N score matrix.
 - **The upstream Triton tutorial-06 kernel is fp16-only.** It hardcodes
@@ -123,7 +159,7 @@ On a single host without Kubernetes (a rented H100, an Ada box):
     streamlit run dashboard/app.py
 
 Seven pages: hardware and environment, prefill, decode, dispatch and fallbacks,
-ranking inversions, Nsight attribution, and backend selection. It reads
+ranking inversions, attribution, and backend selection. It reads
 `results/processed/` and recomputes nothing, so a number here and the same
 number in the report cannot disagree.
 
@@ -156,38 +192,12 @@ measured while the GPU reported a throttle reason are dropped. Confidence
 intervals come from a bootstrap clustered on process repeats, since repeats
 inside one process share clock state.
 
-**Profiling.** `scripts/profile.sh` collects Nsight counters and a launch
-timeline for ten representative cells. `ncu` needs GPU performance counters,
-which shared clusters usually withhold; `nsys` CUDA tracing does not, so the
-launch-overhead half of the attribution survives without them.
-
-## Results
-
-Six GPUs across four architecture families (sm80, sm86, sm89, sm90, sm120),
-73,230 measured rows, 11,858 usable (GPU, configuration, implementation)
-medians, one software snapshot: torch 2.9.0+cu128, CUDA 12.8, triton 3.5.0,
-flash-attn 2.8.3, flashinfer 0.6.18.
-
-- **Most configurations have no separated fastest backend.** The fastest path
-  clears both a 10% margin and a bootstrap interval excluding 1 on 29% of 447
-  forward-prefill and 34% of 1,203 decode configurations. The rest are not
-  proven equal; they simply did not meet the criterion.
-- **Decode rankings mostly transfer across Ampere, Ada and Hopper** (29 of 289
-  separated comparisons flip); **forward-prefill rankings do not** (27 of 64).
-- **RTX 5090 decode comparisons under the tested build** flip on 63 of 85
-  separated comparisons. In the recorded runs the FlashInfer path produced no
-  usable timing there: 950 of 960 attempts ended in a runtime error and the
-  remaining 10 ran out of memory, so how it would have performed on that device
-  could not be measured.
-- **A changed winner is usually cheap.** Carrying the source device's choice to
-  the target costs a median 1.000x in decode and 1.002x in forward prefill,
-  with p95 of 1.33x and 1.61x; 14% of source choices do not exist on the target.
-- **The wheels show the same asymmetry statically.** flash-attn 2.8.3 ships no
-  sm_86 or sm_89 cubins and no PTX, so on those parts it runs sm_80 code
-  (`scripts/provenance.sh`).
-
-`paper/` holds the preprint and `paper/numbers.md` traces every number in it
-back to the code that produced it. `site/` is the long-form write-up.
+**Profiling.** No Nsight counters were collected: every rented host blocked
+Nsight Compute and Nsight Systems. `scripts/profile.sh` exists but produced no
+traces, so nothing here supports an occupancy, cache-hit-rate, measured-roofline
+or bandwidth-saturation claim. Effective KV bandwidth is computed from an
+assumed byte count and the measured latency; it is not a measurement of DRAM
+traffic.
 
 ## Status
 

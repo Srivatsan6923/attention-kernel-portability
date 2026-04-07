@@ -46,8 +46,9 @@
 Published attention benchmarks report a winner measured on one GPU. Does that
 winner survive a change of device? We time 10 prefill and 6 decode
 implementations over 403 configurations on six NVIDIA GPUs spanning sm80, sm86,
-sm89, sm90 and sm120, under one software distribution: torch 2.9.0+cu128, CUDA
-12.8, triton 3.5.0, flash-attn 2.8.3, flashinfer 0.6.18. Most configurations have no winner worth reporting: the fastest backend is
+sm89, sm90 and sm120, at fixed library versions across the recorded GPU and
+host environments: torch 2.9.0+cu128, CUDA
+12.8, triton 3.5.0, flash-attn 2.8.3, flashinfer 0.6.18. Most configurations do not have a separated fastest backend: the fastest is
 separated from the runner-up, by both a 10\% margin and a bootstrap interval
 excluding 1, on 29\% of 447 forward-prefill and 34\% of 1203 decode
 configurations. Among those that are separated, the fastest backend changes
@@ -56,14 +57,15 @@ comparisons within Ampere, Ada and Hopper. Changing winner is not the same as
 paying for it: transferring the source device's choice costs a median
 1.002$\times$ in prefill and 1.000$\times$ in decode, with 95th percentiles of
 1.61$\times$ and 1.32$\times$, and 14\% of source choices are unavailable on
-the target at all. Availability is where the comparison breaks down, at 63 of 85 decode comparisons against the RTX 5090, and availability rather than
-architecture accounts for 62 of those 64: FlashInfer, which wins 131 of 244
-decode configurations on H100, produced no timing at all on the RTX 5090,
-raising a compute-capability \code{RuntimeError} on 950 of 960 attempted rows. A
-cuobjdump audit of the wheels shows the same asymmetry statically: flash-attn
-2.8.3 ships no sm\_86 or sm\_89 cubins and no PTX, so on those parts it runs
-sm\_80 code. The unit of performance is not (kernel, GPU) but (kernel, GPU,
-regime, software-distribution snapshot).
+the target had no eligible timing at all. Winner changes are most frequent
+against the RTX 5090, at 63 of 85 decode comparisons. In the recorded runs the
+FlashInfer path produced no usable timing on that device: 950 of 960 attempts
+raised a runtime error and the remaining 10 ran out of memory, so its
+performance there could not be measured. A \code{cuobjdump} audit records which
+architectures the installed wheels carry native code for; it documents artifact
+coverage and, without a rebuild for the missing targets, does not establish a
+performance cause. These results are scoped to the tested workloads, GPUs and
+library versions.
 \end{abstract}
 
 \section{Introduction}
@@ -76,7 +78,7 @@ attention backend by preference order and carry that order onto every device
 they deploy on, and kernel papers report a winner on the one part their authors
 had. If the ordering belongs to the kernel, that practice is sound. If it
 belongs to the pairing of kernel and device, a preference order tuned on an
-A100 is a guess everywhere else.
+A100 may not hold on another device.
 
 We time 10 prefill and 6 decode implementations over 403 configurations on the
 six GPUs of Table~\ref{tab:devices}; 73{,}230 measured rows collapse to
@@ -89,20 +91,18 @@ Four results follow. First, most configurations have no decisive winner: the
 fastest backend is separated from the runner-up, by both a 10\% margin and a
 bootstrap interval excluding 1, on only 29\% of 447 forward-prefill
 and 34\% of 1203 decode configurations, and the rest are not shown to be
-equal, only undecided. Second, among configurations that are separated, decode
-orderings largely transfer across Ampere, Ada and Hopper while forward-prefill
-orderings do not. Third, decode agreement collapses against the
-Blackwell part, and availability is where the comparison breaks down: in most of
-those flips the winner on the other device is an implementation that produced no
-timing at all on sm120.
-Fourth, an audit of the shipped binaries shows the same asymmetry statically,
-before anything is timed.
+equal, only undecided. Second, among comparisons meeting the separation
+criterion on both GPUs, winner changes were more frequent in forward prefill
+(27 of 64) than in decode (29 of 289). Third, winner changes are most frequent
+against the Blackwell part, where one decode backend produced no usable timing
+at all. Fourth, an audit of the shipped binaries records which architectures
+each wheel carries native code for, which bounds what could have run.
 
 Two contributions follow from that. The first is a protocol that records which
 kernel actually ran rather than which was requested, and that reports a winner
 only where it is separated from the runner-up. The second is the finding itself:
-the unit of performance is not (kernel, GPU) but (kernel, GPU, regime,
-software-distribution snapshot).
+a backend choice should be qualified by the GPU, the regime and the library
+versions it was measured under.
 
 \section{Background and related work}
 
@@ -136,7 +136,8 @@ twelve platforms.
 
 \paragraph{Implementations and grid.} The prefill set is a naive reference, a
 \code{torch.compile} path in three variants, the three PyTorch SDPA backends
-(memory-efficient, flash, cuDNN), a hand-written Triton kernel, FlashAttention 2
+(memory-efficient, flash, cuDNN), a vendored Triton tutorial kernel with a
+local BF16 adaptation, FlashAttention 2
 and 3. The decode set is a naive KV-cache loop, an Inductor path,
 SDPA, \code{flash\_attn\_with\_kvcache}, FlashInfer, and FlashAttention at query
 length 1. A \emph{cell} keys regime, batch, query and KV head counts, head
@@ -144,21 +145,27 @@ dimension, sequence length, dtype, forward or forward-plus-backward, launch
 mode, cache state and causality; the union grid is 159 prefill and 244 decode
 cells, with per-device coverage in Table~\ref{tab:devices}.
 
-\paragraph{Timing protocol.} Implementations are interleaved at the repetition
-level inside one process, so a thermal or clock excursion lands on all of
-them, not on whichever ran last. Latency is a CUDA-event median over inner
-repetitions, then a median over process medians; confidence intervals come from
-a 2000-draw cluster bootstrap over process medians, not over individual
-repetitions, which share clocks and thermal point. The L2 cache
-is flushed where the cell asks for a cold cache. Between-process CV is a median
+\paragraph{Timing protocol.} Backend order is randomised for each
+configuration, and each backend's timing blocks are then collected
+consecutively; the harness does not alternate backends between blocks, so we do
+not claim host or thermal effects are common-mode across a comparison. Latency
+is a CUDA-event median over the calls inside a block, then a median over
+process medians; intervals come from a 2000-draw bootstrap that resamples whole
+process launches, since calls inside one launch share clocks and thermal point.
+Blocks are sized to target roughly 200~\us{}. Where a cell asks for a cold
+cache the L2 buffer is cleared once before each block, so a block of more than
+one call is not uniformly cold. CUDA-graph cells are timed by Triton's
+\code{do\_bench\_cudagraph}, whose \code{rep} argument is a millisecond budget
+rather than a repetition count. Between-process CV is a median
 0.011 on A10 (n=1871) and 0.026 on H100 (n=2474). Processes are pinned
 to the NUMA node local to the GPU: two runs of the H100 decode grid at one
 commit, differing only in pinning and restricted to the eager warm cells, give a
 median between-process CV of 0.1116 unpinned against 0.0341 pinned over 966
 (cell, implementation) triples spanning 192 cells on each side; the share of
-those triples with a CV above 25\% falls from 30.7\% to 9.9\%. Both are timed by
-the \code{block\_bench} wall-clock timer, not by CUDA events, so neither number
-is comparable with the 0.026 above.
+those triples with a CV above 25\% falls from 30.7\% to 9.9\%. Both come from the
+\code{block\_bench} path, which brackets a block of calls with a CUDA-event
+pair; they are dispersion across process launches rather than the per-call
+figure quoted above, and the two are not directly comparable.
 
 \paragraph{Correctness gate.} Every implementation is checked against a
 reference in its equivalence class, and only rows that pass enter a ranking. Of 73{,}230 rows, 54{,}213 (74.0\%) ran and passed;
@@ -226,21 +233,6 @@ that no Inductor row reached a flash kernel at all, does not hold: 45 probed
 Inductor rows, all on H100, over 6 distinct cells, do carry a flash kernel in
 their trace.
 
-\begin{figure}[tb]
-\centering
-\includegraphics[width=\columnwidth]{fig6_winner_bands.pdf}
-\caption{Fastest implementation, binned to workload bands: regime crossed with
-batch (1, 4 to 8, 16 or more) and length (short $\le$1024, mid $\le$4096, long
-above). Each column is one device, the colour names the implementation winning
-most cells of that band there, and blank means the device ran none. A band is
-filled only where at least half its cells have a winner separated by the
-criterion of Section~\ref{sec:port}; the other 67 of the 99 non-empty
-band-device cells are hatched, where the colour is a mode over cells that are
-mostly ties, so a colour change across a hatched row is not evidence of a real
-difference. All 2{,}082 (device, cell) pairs with two or more usable
-implementations are binned, not only cells every device ran.}
-\label{fig:winnermap}
-\end{figure}
 
 \section{Portability}
 \label{sec:port}
@@ -251,12 +243,14 @@ implementations are binned, not only cells every device ran.}
 \caption{How often a fastest backend is separated from the runner-up, by both a
 10\% margin on the runner-up/fastest ratio and a cluster-bootstrap interval on
 that ratio excluding 1. Counts are printed inside each bar; whiskers are 95\%
-intervals over cells. \emph{Observation:} the criterion is met on 128 of
+intervals over cells. Workload counts differ by device, so the bars describe
+the configurations each device measured rather than an isolated architectural
+effect. The criterion is met on 128 of
 447 forward-prefill and 409 of 1203 decode configurations, and no device
-clears half in both regimes. \emph{Interpretation:} exact winner counts are
-sensitive to small timing differences over most of this grid. Configurations
-that fail the criterion are not shown to be equal; they are configurations
-where we could not establish a fastest backend.}
+clears half in both regimes. Exact winner counts are therefore sensitive to
+small timing differences over most of this grid. Configurations that fail the
+criterion are not shown to be equal; they are configurations where no fastest
+backend was established. The margin panel pools every device and both regimes.}
 \label{fig:sep}
 \end{figure*}
 
@@ -269,24 +263,25 @@ Hopper, over each device's native backend set and over the set both devices of
 a pair ran, with winners and separation re-derived after restricting.
 \emph{Right:} the distribution of the target-device latency of the source
 device's chosen backend divided by the target's own best.
-\emph{Observation:} winners differ on 27 of 64 forward-prefill and 29
+Winners differ on 27 of 64 forward-prefill and 29
 of 289 decode comparisons, yet the median transfer costs 1.002$\times$ and
 1.000$\times$, with 95th percentiles of 1.61$\times$ and 1.32$\times$;
 14\% of source choices do not run on the target at all and are counted here
-rather than dropped. \emph{Interpretation:} a changed winner is usually not a
-changed outcome. The cost of carrying a choice across these devices lives in
-the tail and in availability, not at the median.}
+rather than dropped. Across costed source-to-target transfers the median
+latency ratio was close to 1, while the upper tail showed larger penalties.
+The distribution mixes comparisons whose winner changed with those whose winner
+did not, so it describes the cost of carrying a choice, not the cost of a
+flip.}
 \label{fig:transfer}
 \end{figure*}
 
 
 \paragraph{Most cells have no decisive winner.} A winner counts as \emph{separated} only if the runner-up's median latency is
 at least 1.10 times the winner's and the cluster-bootstrap CI on that ratio
-excludes 1. By that criterion Figure~\ref{fig:sep} gives the rate per device. Pooled, only 28.6\% of
-forward-prefill and 34.0\% of decode configurations have a
-separated winner (128 of 447 and 409 of 1203), and Figure~\ref{fig:winnermap} hatches every band where they
-are a minority. A flip between implementations within a few percent of each
-other is a coin toss reported as a result, so every rate below is computed
+excludes 1. Only 28.6\% of forward-prefill and 34.0\% of decode
+configurations have a separated winner, 128 of 447 and 409 of 1203, and
+Figure~\ref{fig:sep} gives the rate per device. A flip between implementations within a few percent of each
+other has not been shown to differ, so every rate below is computed
 twice, over all shared cells and over cells separated on both devices.
 
 \paragraph{The regime split.} Table~\ref{tab:flips} pools the ten device pairs
@@ -303,10 +298,12 @@ FlashAttention 3 existing only on H100 and FlashInfer being absent on the RTX
 
 \paragraph{RTX 5090 comparisons under the tested build.} The lower half of Table~\ref{tab:flips}
 repeats the calculation for the five pairs including the RTX 5090. The decode rate stays high, at 63 of 85, while forward prefill is 16 of 30.
-What makes the 5090 disagree is therefore specific to decode, and
-Section~\ref{sec:mech} identifies it as availability, not architecture: in 62 of
-those 64 flips the winner on the other device is FlashInfer, which produced no
-timing on the 5090.
+The gap between the two regimes is large, and the decode side coincides with an
+availability difference: in most of those comparisons the other device's winner
+is FlashInfer, which produced no usable timing on the 5090
+(Section~\ref{sec:mech}). That is an observed association on this build. We did
+not measure what FlashInfer would have cost there, so we do not attribute the
+change to architecture or to availability as a cause.
 
 \begin{table}[tb]
 \centering
@@ -395,14 +392,12 @@ measured copy bandwidth within 0.05\% of each other.
 process repeats against 5 on every other device, and a realised median of 2,
 though its cell coverage is complete. Across the dataset 1 of 11{,}858 usable
 triples has a single process repeat, and for it the bootstrap has nothing to
-resample, so its CI width of 0 is an artefact. To check that thinner
-sampling does not manufacture separated winners, we recount separation on
-two complete devices after subsampling them to three repeats: L40S moves
-from 31 to 34 separated decode cells and A100 from 115 to 110, so the
-criterion is dominated by the 1.10 margin rather than by bootstrap width. Requiring a separated winner on
-both sides then discards about two thirds of the cells as ties, which is the
-right call for a ranking claim but leaves the headline comparisons resting on
-tens to low hundreds of paired cells.
+resample, so its CI width of 0 is an artefact. Requiring a separated winner on both sides is a
+heavy restriction: it leaves 64 of the 720 forward-prefill and 289 of the 1916
+decode comparisons among Ampere, Ada and Hopper devices, excluding 656 and 1627
+respectively. That is the right restriction for a ranking claim, and it leaves
+the headline comparisons resting on tens to low hundreds of paired
+configurations.
 
 \paragraph{Unprobed dispatch cells.} 33.5\% of passing rows captured no kernel
 trace and 26 of 651 dispatch classes have no probed row at all, so the 0.449\%
@@ -441,8 +436,8 @@ preference order should re-measure that order on each deployment target, since
 the orderings that transfer here are the decode ones, and only within the
 architectures for which the installed libraries ship native code. And a
 reported winner should carry the margin separating it from the runner-up,
-because on roughly two thirds of the configurations measured here there is no
-separation to report.
+because the criterion was met on only 128 of 447 forward-prefill and 409 of 1203
+decode configurations measured here.
 
 \appendix
 \section{Binary provenance}

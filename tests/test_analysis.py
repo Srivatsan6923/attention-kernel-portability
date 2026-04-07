@@ -141,3 +141,65 @@ def test_boot_ratio_uses_the_median_and_pairs_process_launches():
     lo2, hi2 = analysis._boot_ratio(b, b, ids_a=[0, 1, 2, 3, 4],
                                    ids_b=[0, 1, 2, 3, 4])
     assert lo2 == hi2 == 1.0
+
+
+# --- third-review regressions: estimator population, n=1, gate scope --------
+
+def test_ratio_and_interval_use_one_population():
+    """Ranking on all repeats while resampling only the shared ones described
+    two different quantities. Uneven ids once gave a 50x point ratio beside a
+    [0.5, 0.5] interval."""
+    a = [100.0, 100.0, 100.0, 5000.0, 5000.0]   # ids 0,1,2,7,8
+    b = [100.0] * 5                              # ids 0..4
+    ratio, lo, hi, n = analysis.paired_ratio_ci(
+        a, b, ids_a=[0, 1, 2, 7, 8], ids_b=[0, 1, 2, 3, 4])
+    assert n == 3, "only the shared launches are comparable"
+    assert ratio == 1.0, "estimate must come from the same 3 launches"
+    assert lo == hi == 1.0
+
+
+def test_one_launch_cannot_produce_a_separated_winner():
+    """Resampling a single value returns it every draw, so the interval has
+    zero width and 'excludes 1' for any ratio at all."""
+    ratio, lo, hi, n = analysis.paired_ratio_ci([50.0], [1.0], ids_a=[0], ids_b=[0])
+    assert n == 1 and ratio == 50.0
+    assert np.isnan(lo) and np.isnan(hi)
+    assert analysis.separated(ratio, lo) is False
+
+
+def test_separation_needs_the_lower_bound_above_one():
+    """The ratio is runner-up/fastest and so >= 1. An upper bound below 1
+    contradicts the point estimate; it is not evidence of separation."""
+    assert analysis.separated(1.5, 1.2) is True
+    assert analysis.separated(1.5, 0.9) is False     # interval spans 1
+    assert analysis.separated(1.02, 1.01) is False   # under the margin
+    assert analysis.separated(1.5, float("nan")) is False
+
+
+def test_duplicate_launch_ids_are_rejected():
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="duplicate launch ids"):
+        analysis.paired_ratio_ci([1.0, 1.0], [1.0, 1.0], ids_a=[0, 0], ids_b=[0, 1])
+
+
+def test_gate_verdict_does_not_cross_devices():
+    """gate_class carries no GPU, so propagating on it alone let a pass on one
+    device mark an untested class on another as verified."""
+    d = pd.DataFrame({
+        "gpu_name": ["A", "A", "B"],
+        "gate_class": ["cls1", "cls1", "cls1"],
+        "correctness_pass": [True, None, None],
+    })
+    st = analysis.gate_status(d)
+    assert list(st) == ["pass", "pass", "ungated"], list(st)
+    ev = analysis.gate_evidence(d)
+    assert list(ev) == ["direct", "inherited", "none"], list(ev)
+
+
+def test_a_failure_outranks_a_sibling_pass_on_the_same_device():
+    d = pd.DataFrame({
+        "gpu_name": ["A", "A"],
+        "gate_class": ["cls1", "cls1"],
+        "correctness_pass": [True, False],
+    })
+    assert set(analysis.gate_status(d)) == {"fail"}

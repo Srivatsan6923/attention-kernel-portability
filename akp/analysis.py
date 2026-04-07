@@ -104,6 +104,7 @@ def derive(df: pd.DataFrame, env: dict | None = None) -> pd.DataFrame:
     df["l2_bytes"] = df.gpu_name.map(lambda g: (env or {}).get(g, {}).get("l2_bytes"))
     df["peak_bw_gbs"] = peak
     df["gate_status"] = gate_status(df)
+    df["gate_evidence"] = gate_evidence(df)
 
     # Working set: the tensors that are resident, Q and O at q_len, K and V at
     # N. expand_kv calls repeat_interleave, not expand, so an implementation
@@ -315,8 +316,10 @@ def usable(df: pd.DataFrame) -> pd.DataFrame:
         # fillna(True) used to turn "no verdict" into "passed", which is the
         # one thing a correctness gate must never do silently. gate_status
         # names the three states, and only an actual failure disqualifies.
-        st = gate_status(df)
-        ok &= st != "fail"
+        # Ranking requires a passing verdict for that device and class.
+        # "ungated" is an absence of evidence and does not qualify a row for a
+        # correctness-gated comparison; it is reported, not counted as a pass.
+        ok &= gate_status(df) == "pass"
     return df[ok]
 
 
@@ -332,16 +335,39 @@ def gate_status(df: pd.DataFrame) -> pd.Series:
     st = pd.Series("ungated", index=df.index, dtype=object)
     if "correctness_pass" not in df:
         return st
-    if "gate_class" in df:
-        cls = df.gate_class
-        failed = set(df.loc[df.correctness_pass == False, "gate_class"].dropna())
-        passed = set(df.loc[df.correctness_pass == True, "gate_class"].dropna())
-        st[cls.isin(passed)] = "pass"
-        st[cls.isin(failed)] = "fail"      # failure wins over a sibling pass
+    if "gate_class" in df and "gpu_name" in df:
+        # Keyed on the DEVICE as well as the class. gate_class carries no GPU,
+        # so propagating on it alone let a pass recorded on one device mark an
+        # untested class on another as verified.
+        key = df.gpu_name.astype(str) + "\x00" + df.gate_class.astype(str)
+        ok = df.correctness_pass == True
+        bad = df.correctness_pass == False
+        passed = set(key[ok].dropna())
+        failed = set(key[bad].dropna())
+        st[key.isin(passed)] = "pass"
+        st[key.isin(failed)] = "fail"      # a failure outranks a sibling pass
+        st[df.gate_class.isna()] = "ungated"
     else:
         st[df.correctness_pass == True] = "pass"
         st[df.correctness_pass == False] = "fail"
     return st
+
+
+def gate_evidence(df: pd.DataFrame) -> pd.Series:
+    """direct / inherited / none -- how a row's verdict was obtained.
+
+    The gate runs on one representative per (device, class), so most rows
+    legitimately inherit within their own device. "none" is the category that
+    must never be silently counted as a pass.
+    """
+    ev = pd.Series("none", index=df.index, dtype=object)
+    if "correctness_pass" not in df or "gate_class" not in df or "gpu_name" not in df:
+        return ev
+    key = df.gpu_name.astype(str) + "\x00" + df.gate_class.astype(str)
+    verdicted = set(key[df.correctness_pass.notna()].dropna())
+    ev[key.isin(verdicted)] = "inherited"
+    ev[df.correctness_pass.notna()] = "direct"
+    return ev
 
 
 # --------------------------------------------------------------------------- #
@@ -383,7 +409,7 @@ def winner_flips(cells: pd.DataFrame) -> dict:
             "top1_stable": float((common == 1).mean())}
 
 
-def _boot_ratio(a, b, n=2000, seed=0, ids_a=None, ids_b=None):
+def paired_ratio_ci(a, b, n=2000, seed=0, ids_a=None, ids_b=None):
     """Cluster bootstrap over process launches, on the reported estimator.
 
     Two things this has to get right, and previously did not.
@@ -404,27 +430,57 @@ def _boot_ratio(a, b, n=2000, seed=0, ids_a=None, ids_b=None):
     """
     rng = np.random.default_rng(seed)
     a, b = np.asarray(a, float), np.asarray(b, float)
+    nan3 = (float("nan"), float("nan"), float("nan"), 0)
     if len(a) == 0 or len(b) == 0:
-        return float("nan"), float("nan")
+        return nan3
 
-    shared = None
+    # One population for the estimate and the interval. Ranking on every
+    # repeat while resampling only the shared ones described two different
+    # things, and produced a 50x point ratio beside a [0.5, 0.5] interval.
     if ids_a is not None and ids_b is not None:
+        if len(set(ids_a)) != len(ids_a) or len(set(ids_b)) != len(ids_b):
+            raise ValueError("duplicate launch ids: %r / %r" % (ids_a, ids_b))
         ia = {v: i for i, v in enumerate(ids_a)}
         ib = {v: i for i, v in enumerate(ids_b)}
         keys = sorted(set(ia) & set(ib))
-        if len(keys) >= 2:
-            shared = (np.array([ia[k] for k in keys]),
-                      np.array([ib[k] for k in keys]))
+        a = a[[ia[k] for k in keys]]
+        b = b[[ib[k] for k in keys]]
 
-    if shared is not None:
-        pa, pb = a[shared[0]], b[shared[1]]
-        pick = rng.integers(0, len(pa), (n, len(pa)))
-        r = np.median(pa[pick], axis=1) / np.median(pb[pick], axis=1)
+    # A single launch cannot support an interval: resampling one value returns
+    # it every draw, giving zero width that then "excludes 1" for any ratio.
+    if len(a) < 2 or len(b) < 2:
+        return float(np.median(a) / np.median(b)) if len(a) and len(b) else float("nan"), \
+               float("nan"), float("nan"), min(len(a), len(b))
+
+    ratio = float(np.median(a) / np.median(b))
+    if len(a) == len(b):
+        pick = rng.integers(0, len(a), (n, len(a)))
+        r = np.median(a[pick], axis=1) / np.median(b[pick], axis=1)
     else:
         ra = np.median(rng.choice(a, (n, len(a)), replace=True), axis=1)
         rb = np.median(rng.choice(b, (n, len(b)), replace=True), axis=1)
         r = ra / rb
-    return np.percentile(r, 2.5), np.percentile(r, 97.5)
+    return ratio, float(np.percentile(r, 2.5)), float(np.percentile(r, 97.5)), len(a)
+
+
+def separated(ratio, lo, margin=None):
+    """The runner-up/fastest ratio clears the margin and its interval excludes 1.
+
+    Only a lower bound above 1 is evidence. The ratio is >= 1 by construction,
+    so an upper bound below 1 meant the interval contradicted its own point
+    estimate; accepting that case let a pathological pairing register as a
+    separated winner.
+    """
+    m = PRACTICAL if margin is None else margin
+    if not np.isfinite(ratio) or not np.isfinite(lo):
+        return False
+    return bool(lo > 1.0 and ratio >= m)
+
+
+def _boot_ratio(a, b, n=2000, seed=0, ids_a=None, ids_b=None):
+    """Back-compatible two-tuple wrapper."""
+    _, lo, hi, _ = paired_ratio_ci(a, b, n=n, seed=seed, ids_a=ids_a, ids_b=ids_b)
+    return lo, hi
 
 
 def _boot_mean(x, n=2000, seed=0):

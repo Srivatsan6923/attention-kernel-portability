@@ -14,7 +14,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from akp.analysis import PRACTICAL, _boot_ratio, per_cell_median, usable
+from akp.analysis import (PRACTICAL, paired_ratio_ci, per_cell_median, usable)
 
 SHORT = {"NVIDIA A10": "A10", "NVIDIA A100-SXM4-80GB": "A100",
          "NVIDIA H100 80GB HBM3": "H100", "NVIDIA L40": "L40",
@@ -139,7 +139,7 @@ def main(argv=None):
             ratio = float(ru.median_us / w.median_us)
             kw = (dict(ids_a=ru.repeat_ids, ids_b=w.repeat_ids)
                   if "repeat_ids" in sub.columns else {})
-            lo, hi = _boot_ratio(ru.samples, w.samples, **kw)
+            _ratio, lo, hi, _n = paired_ratio_ci(ru.samples, w.samples, **kw)
             rec["ratio"] = r3(ratio)
             rec["runner_up"] = ru.implementation
             rec["sep"] = bool((lo > 1 or hi < 1) and ratio >= PRACTICAL)

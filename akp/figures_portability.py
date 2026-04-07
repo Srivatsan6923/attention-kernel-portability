@@ -43,7 +43,12 @@ COL_GREY = "#9a9a9a"
 def fig_separation(L, out, name="figA_separation.pdf"):
     """Per device, the fraction of configurations with a separated winner."""
     by = L["questions"]["separation_by_device"]
-    devs = sorted(by, key=lambda g: -by[g]["decode"]["pct"])
+    # One order for every figure and table in the paper and on the site:
+    # ascending compute capability. Sorting by a measured rate makes the same
+    # device sit in a different column in each figure.
+    CC = {"A100": 8.0, "A10": 8.6, "L40": 8.9, "L40S": 8.9,
+          "H100": 9.0, "RTX 5090": 12.0}
+    devs = sorted(by, key=lambda g: (CC.get(g, 99), g))
     x = np.arange(len(devs))
     w = 0.38
 
@@ -69,7 +74,7 @@ def fig_separation(L, out, name="figA_separation.pdf"):
     ax.set_ylim(0, 100)
     ax.axhline(50, color=COL_GREY, lw=0.6, ls=":", zorder=2)
     ax.legend(frameon=False, loc="upper right")
-    ax.set_title("A  Most configurations have no separated winner", loc="left")
+    ax.set_title("A  Separated fastest backends by GPU", loc="left")
 
     ms = L["questions"]["separation_margin_sensitivity"]
     margins = sorted(ms)
@@ -82,7 +87,7 @@ def fig_separation(L, out, name="figA_separation.pdf"):
     ax2.set_xlabel("practical margin")
     ax2.set_ylabel("separated (%)")
     ax2.set_ylim(0, 60)
-    ax2.set_title("B  Margin sensitivity", loc="left")
+    ax2.set_title("B  Margin sensitivity, pooled over all devices", loc="left")
     return save(fig, out, name)
 
 
@@ -143,7 +148,7 @@ def fig_transfer(L, rows, out, name="figB_transfer.pdf"):
                     color="white", zorder=5)
     ax.set_xticks(x)
     ax.set_xticklabels([g[0] for g in groups])
-    ax.set_ylabel("device pairs whose winner differs (%)")
+    ax.set_ylabel("matched workload comparisons\nwith a different winner (%)")
     ax.set_ylim(0, 70)
     ax.legend(frameon=False, fontsize=6)
     ax.set_title("A  Winner flips, Ampere/Ada/Hopper", loc="left")
@@ -168,13 +173,17 @@ def fig_transfer(L, rows, out, name="figB_transfer.pdf"):
     # explicit ones; the ratio is small and unitless, so suppress them.
     ax2.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
     ax2.set_xlabel("target latency of the source's choice / target best")
-    ax2.set_ylabel("fraction of comparisons")
+    ax2.set_ylabel("cumulative fraction of costed transfers")
     ax2.set_ylim(0, 1)
     ax2.legend(frameon=False, loc="lower right", fontsize=6)
-    sub = "; ".join("%s %.0f%% unavailable on target"
-                    % (k, 100 * u[0] / max(u[1], 1)) for k, u in unavail.items())
-    ax2.set_title("B  Cost of transferring the choice\n" + sub, loc="left",
-                  fontsize=7)
+    ax2.set_title("B  Cost of transferring the choice", loc="left")
+    # In the axes rather than the title: as a two-line title this ran past the
+    # right edge of the figure and was clipped.
+    note = "\n".join(
+        "%s: %d of %d source choices had no eligible target timing"
+        % (k, u[0], u[1]) for k, u in sorted(unavail.items()))
+    ax2.text(0.02, 0.97, note, transform=ax2.transAxes, va="top", ha="left",
+             fontsize=5.5, color="#444")
     return save(fig, out, name)
 
 

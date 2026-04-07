@@ -37,7 +37,8 @@ import pandas as pd
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from akp.analysis import PRACTICAL, _boot_ratio, per_cell_median, usable  # noqa: E402
+from akp.analysis import (PRACTICAL, paired_ratio_ci, per_cell_median,  # noqa: E402
+                          separated, usable)
 
 MARGINS = (1.05, 1.10, 1.15)
 
@@ -69,12 +70,16 @@ def build_index(cells, margin=PRACTICAL):
                                ratio=float("nan"), lat=lat, n=len(s))
             continue
         w, ru = s.iloc[0], s.iloc[1]
-        ratio = ru.median_us / w.median_us
         kw = dict(ids_a=ru.repeat_ids, ids_b=w.repeat_ids) if ids else {}
-        lo, hi = _boot_ratio(ru.samples, w.samples, **kw)
+        # ratio and interval from one population, and separation needs the
+        # lower bound above 1: the ratio is runner-up/fastest and so >= 1 by
+        # construction, which makes an upper bound below 1 a contradiction
+        # rather than evidence.
+        ratio, lo, _hi, n_launch = paired_ratio_ci(ru.samples, w.samples, **kw)
         rec[(g, c)] = dict(winner=w.implementation,
-                           sep=bool((lo > 1 or hi < 1) and ratio >= margin),
-                           ratio=float(ratio), lat=lat, n=len(s))
+                           sep=separated(ratio, lo, margin),
+                           ratio=float(ratio), lat=lat, n=len(s),
+                           n_launch=int(n_launch))
     return rec
 
 
@@ -243,27 +248,41 @@ def main():
 
     # common-set: recompute winners over the intersection, per pair and regime
     def common_flip(pred, gset, label):
-        out, excl = [], 0
+        """Intersect the eligible backends per matched workload, not per regime.
+
+        A backend can run somewhere in a regime on both devices and still be
+        absent from the particular cell being compared, so a regime-level
+        intersection does not restrict the comparison it claims to restrict.
+        """
+        out, excl, skipped = [], 0, 0
+        by_cell = {}
+        for (g, c), r in rec.items():
+            by_cell.setdefault(c, {})[g] = set(r["lat"])
         for i, a in enumerate(gset):
             for b in gset[i + 1:]:
-                reg = "prefill" if "prefill" in label else "decode"
-                keep = elig.get((a, reg), set()) & elig.get((b, reg), set())
-                if len(keep) < 2:
-                    continue
-                rr = restrict(cells, keep)
-                for (g, c), r in rr.items():
-                    if g != a or not pred(a, c) or (b, c) not in rr:
+                for c, per in by_cell.items():
+                    if a not in per or b not in per or not pred(a, c):
                         continue
-                    r2 = rr[(b, c)]
+                    keep = per[a] & per[b]
+                    if len(keep) < 2:
+                        skipped += 1
+                        continue
+                    rr = restrict(cells[cells.cell == c], keep)
+                    if (a, c) not in rr or (b, c) not in rr:
+                        continue
+                    r, r2 = rr[(a, c)], rr[(b, c)]
                     if not (r["sep"] and r2["sep"]):
                         excl += 1
                         continue
                     out.append((c, r["winner"] != r2["winner"]))
         rate, lo, hi = boot_rate(out)
-        return dict(question=label, subset="common backend set, re-derived",
+        return dict(question=label,
+                    subset="backends shared by both devices on that workload, "
+                           "winners and separation re-derived",
                     n_separated_both=len(out),
                     k_flipped=int(sum(f for _, f in out)),
-                    pct=rate, lo=lo, hi=hi, excluded_not_separated=excl)
+                    pct=rate, lo=lo, hi=hi, excluded_not_separated=excl,
+                    skipped_fewer_than_two_shared=skipped)
 
     Q["flip_prefill_fwd_common"] = common_flip(
         P_FWD, NONBLK, "Winner-flip rate, forward prefill, common backend set")
