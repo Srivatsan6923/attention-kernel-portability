@@ -167,6 +167,67 @@ those triples with a CV above 25\% falls from 30.7\% to 9.9\%. Both come from th
 pair; they are dispersion across process launches rather than the per-call
 figure quoted above, and the two are not directly comparable.
 
+\paragraph{Definitions.} Let $t_{g,c,b,r}$ be the median attention-call latency
+inside process launch $r$, for GPU $g$, configuration $c$ and backend $b$. The
+reported latency is the median over launches,
+%
+\begin{equation}
+T_{g,c,b} \;=\; \operatorname*{median}_{r}\; t_{g,c,b,r} .
+\label{eq:lat}
+\end{equation}
+%
+Writing $b_1$ and $b_2$ for the fastest and second-fastest eligible backends at
+$(g,c)$, the separation ratio and the rule are
+%
+\begin{equation}
+R_{g,c} \;=\; \frac{T_{g,c,b_2}}{T_{g,c,b_1}} ,
+\label{eq:ratio}
+\end{equation}
+\vspace{-1.1em}
+\begin{equation}
+\mathrm{Sep}(g,c) \;=\; \mathbf{1}\!\left[\,R_{g,c} \ge 1.10 \;\wedge\;
+L_{95}(R_{g,c}) > 1 \,\right],
+\label{eq:sep}
+\end{equation}
+%
+where $L_{95}$ is the lower endpoint of a 95\% bootstrap interval on the same
+ratio, resampling whole process launches. Both conditions are required. A
+configuration that fails the rule has not been shown to have equal backends; it
+is one where no fastest backend was established. Equations~\ref{eq:lat}
+and~\ref{eq:ratio} are computed over the same launches: the two backends being
+compared ran in identical launch sets in all 2{,}082 cells here, so no
+restriction to a shared subset was needed.
+
+Let $\mathcal{B}_{g,c}$ be the backends with a usable measurement at $(g,c)$ and
+$b^{*}_{g,c}$ the winner. Over a set $\mathcal{E}$ of matched comparisons, each
+a triple $(g,h,c)$ for which $c$ was measured on both GPUs and
+$\mathrm{Sep}(g,c) = \mathrm{Sep}(h,c) = 1$,
+%
+\begin{equation}
+\mathrm{WCR} \;=\;
+\frac{\sum_{(g,h,c)\in\mathcal{E}} \mathbf{1}\!\left[b^{*}_{g,c} \neq b^{*}_{h,c}\right]}
+     {\lvert \mathcal{E} \rvert} .
+\label{eq:wcr}
+\end{equation}
+%
+The common-backend variant restricts each comparison to
+$\mathcal{B}^{\mathrm{common}}_{g,h,c} = \mathcal{B}_{g,c} \cap \mathcal{B}_{h,c}$,
+intersected per matched configuration rather than per regime, and re-derives
+$b^{*}$ and $\mathrm{Sep}$ inside that set.
+
+Finally, the cost of carrying GPU $g$'s choice to GPU $h$ is
+%
+\begin{equation}
+C_{g \rightarrow h,\,c} \;=\;
+\frac{T_{h,c,\,b^{*}_{g,c}}}{\min_{b \in \mathcal{B}_{h,c}} T_{h,c,b}} .
+\label{eq:transfer}
+\end{equation}
+%
+A value of 1.20 means the source GPU's selected backend takes 20\% longer than
+the fastest backend measured on the target. Where $b^{*}_{g,c} \notin
+\mathcal{B}_{h,c}$ the ratio is undefined; those cases are reported as a
+coverage count and never replaced by the target's own best.
+
 \paragraph{Correctness gate.} Every implementation is checked against a
 reference in its equivalence class, and only rows that pass enter a ranking. Of 73{,}230 rows, 54{,}213 (74.0\%) ran and passed;
 16{,}326 are \code{UNSUPPORTED}, 1{,}590 were refused in advance by an

@@ -43,6 +43,31 @@ it.
 `paper/` holds the preprint and `paper/numbers.md` traces every number in it
 back to the code that produced it. `site/` is the long-form write-up.
 
+## What the numbers mean
+
+Four definitions carry every result. The paper's Method section states them
+formally; these are the plain-English versions.
+
+- **Reported latency.** The median of per-process-launch median attention-call
+  durations, in microseconds. Steady-state attention-call latency with prepared
+  inputs, not request latency, model tokens/s or end-to-end TTFT.
+- **Separated winner.** The fastest backend counts as the winner only if the
+  runner-up is at least 10% slower *and* the lower end of a 95% bootstrap
+  interval on that ratio still exceeds 1. Both conditions. Failing the rule does
+  not mean the backends are equal; it means no fastest backend was established.
+- **Winner-change rate.** Over matched comparisons where a configuration was
+  measured on both GPUs and both winners are separated: the fraction whose
+  winning backend differs. The common-backend variant intersects the eligible
+  backends **per matched configuration**, then re-derives winners and separation
+  inside that set.
+- **Transfer cost.** The target GPU's latency for the source GPU's chosen
+  backend, divided by the target's own fastest. 1.20 means the carried choice
+  takes 20% longer than the best measured on the target. Where the source's
+  choice has no eligible target timing the ratio is undefined and is reported as
+  a coverage count, never replaced by the target's best.
+
+See `paper/main.tex`, Section 3 (Definitions), for the equations.
+
 ## Why the dispatch check matters
 
 A benchmark can call `flash_attn_func` and measure something else entirely: a

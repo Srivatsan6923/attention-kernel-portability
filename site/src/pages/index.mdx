@@ -511,6 +511,39 @@ There are no hardware counters for any run on any platform in this study. That r
 	</Observation>
 </ResearchFigure>
 
+## How a winner is decided, and what a transfer costs
+
+Two definitions carry every number on this page.
+
+A backend only counts as the winner of a configuration if it beats the
+runner-up by a practical margin *and* the uncertainty on that margin stays on
+one side of 1. Writing $T_{g,c,b}$ for the median of per-launch median
+latencies on GPU $g$, configuration $c$, backend $b$, and $b_1, b_2$ for the
+fastest and second-fastest:
+
+$$
+R_{g,c} = \frac{T_{g,c,b_2}}{T_{g,c,b_1}}
+\qquad
+\operatorname{Sep}(g,c) = \mathbf{1}\!\left[R_{g,c} \ge 1.10 \;\wedge\; L_{95}(R_{g,c}) > 1\right]
+$$
+
+In words: the second-fastest backend must be at least 10% slower, and the lower
+end of a 95% bootstrap interval on that ratio must still exceed 1. A
+configuration failing this rule has not been shown to have equally fast
+backends; it is one where no fastest backend could be established.
+
+The second question is what it costs to carry GPU $g$'s choice over to GPU $h$
+on the same workload:
+
+$$
+C_{g \rightarrow h,\,c} = \frac{T_{h,c,\,b^{*}_{g,c}}}{\min_{b \in \mathcal{B}_{h,c}} T_{h,c,b}}
+$$
+
+In words: 1.20 means the source GPU's pick takes 20% longer than the fastest
+backend actually measured on the target. Where the source's pick has no
+eligible timing on the target the ratio is undefined, and those cases are
+counted separately rather than filled in with the target's own best.
+
 ## Portability
 
 This is the result the sweep was built for. A flip rate answers whether a choice made on one device survives a move to another, and it is interpretable only with two things attached: the number of cells it was computed over, and whether those cells had a winner worth naming in the first place.
