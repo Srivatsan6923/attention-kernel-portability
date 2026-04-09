@@ -56,8 +56,8 @@ between devices on 27 of 64 forward-prefill comparisons and 29 of 289 decode
 comparisons within Ampere, Ada and Hopper. Changing winner is not the same as
 paying for it: transferring the source device's choice costs a median
 1.002$\times$ in prefill and 1.000$\times$ in decode, with 95th percentiles of
-1.61$\times$ and 1.32$\times$, and 14\% of source choices are unavailable on
-the target had no eligible timing at all. Winner changes are most frequent
+1.61$\times$ and 1.32$\times$. No eligible target timing was available for 85 of
+590 prefill choices and 287 of 1{,}974 decode choices. Winner changes are most frequent
 against the RTX 5090, at 63 of 85 decode comparisons. In the recorded runs the
 FlashInfer path produced no usable timing on that device: 950 of 960 attempts
 raised a runtime error and the remaining 10 ran out of memory, so its
@@ -81,11 +81,10 @@ belongs to the pairing of kernel and device, a preference order tuned on an
 A100 may not hold on another device.
 
 We time 10 prefill and 6 decode implementations over 403 configurations on the
-six GPUs of Table~\ref{tab:devices}; 73{,}230 measured rows collapse to
-11{,}858 usable (GPU, configuration, implementation) medians.\footnote{Harness, analysis and figure code: \url{https://github.com/Srivatsan6923/attention-kernel-portability}}
+six GPUs of Table~\ref{tab:devices}; 73{,}230 attempt records collapse to
+11{,}835 usable (GPU, configuration, implementation) medians.\footnote{Harness, analysis and figure code: \url{https://github.com/Srivatsan6923/attention-kernel-portability}}
 Every claim is a within-device ordering compared across devices, never a claim
-that one device is faster than another, so host effects such as clock drift and
-contention are common to the implementations being compared.
+that one device is faster than another.
 
 Four results follow. First, most configurations have no decisive winner: the
 fastest backend is separated from the runner-up, by both a 10\% margin and a
@@ -106,15 +105,14 @@ versions it was measured under.
 
 \section{Background and related work}
 
-Each attention paper names one device. FlashAttention
+FlashAttention
 \citep{dao2022flashattention} keeps the $N \times N$ scores out of HBM, on A100;
 FlashAttention-2 \citep{dao2023flashattention2} reaches 50--73\% of peak FLOPs/s,
 again on A100, deferring Hopper; FlashAttention-3
 \citep{shah2024flashattention3} is that deferred work, on H100 only, at 840 BF16
 TFLOPs/s. Flash-Decoding \citep{dao2023flashdecoding} adds split-KV for
 $q_{\text{len}} = 1$ on A100, and FlashInfer \citep{ye2025flashinfer} generalises
-it into a serving engine, on A100 and H100. The generation-spanning reading is
-the reader's addition, not the authors'.
+it into a serving engine, on A100 and H100.
 
 Evaluation inherits the habit. The PyTorch 2 paper \citep{ansel2024pytorch2}
 reports 2.27$\times$ inference geometric-mean speedup over 180+ models on one
@@ -229,7 +227,11 @@ the fastest backend measured on the target. Where $b^{*}_{g,c} \notin
 coverage count and never replaced by the target's own best.
 
 \paragraph{Correctness gate.} Every implementation is checked against a
-reference in its equivalence class, and only rows that pass enter a ranking. Of 73{,}230 rows, 54{,}213 (74.0\%) ran and passed;
+reference in its equivalence class, and only rows with a passing verdict for
+their own device and class enter a ranking. Of 73{,}230 attempt records, 54{,}213
+(74.0\%) completed with status \code{OK}; of those, 54{,}098 carry a passing
+verdict and are eligible, and 115 belong to one class that was never gated on
+its own device and are excluded;
 16{,}326 are \code{UNSUPPORTED}, 1{,}590 were refused in advance by an
 out-of-memory predictor, and 950 raised a run-time error, all of them one
 implementation on one device (Section~\ref{sec:mech}). The remaining 151 hit the
@@ -268,7 +270,8 @@ with at least one usable measurement.}
 
 A latency is evidence about a kernel only if that kernel is the one that ran, so
 we record the launched kernel names for every timed row and compare them with
-the implementation the harness asked for. Of the 54{,}213 passing rows, 36{,}054
+the implementation the harness asked for. Coverage below is over all 54{,}213
+\code{OK} attempts, not the 54{,}098 eligible rows. Of those 54{,}213, 36{,}054
 (66.5\%) captured a readable trace. Grouping by the tuple that determines
 dispatch, (implementation, GPU, head dimension, dtype, GQA ratio, mode, launch),
 gives 651 dispatch classes, 625 of them (96.0\%) with at least one probed row.
@@ -311,24 +314,27 @@ effect. The criterion is met on 128 of
 clears half in both regimes. Exact winner counts are therefore sensitive to
 small timing differences over most of this grid. Configurations that fail the
 criterion are not shown to be equal; they are configurations where no fastest
-backend was established. The margin panel pools every device and both regimes.}
+backend was established. Panel B pools configurations across GPUs separately for
+forward prefill and decode.}
 \label{fig:sep}
 \end{figure*}
 
 \begin{figure*}[tb]
 \centering
 \includegraphics[width=\textwidth]{figB_transfer.pdf}
-\caption{Whether the selected backend transfers, and what it costs when it does
-not. \emph{Left:} winner-flip rate over device pairs among Ampere, Ada and
-Hopper, over each device's native backend set and over the set both devices of
-a pair ran, with winners and separation re-derived after restricting.
-\emph{Right:} the distribution of the target-device latency of the source
-device's chosen backend divided by the target's own best.
+\caption{Winner-change rates and the latency cost of transferring a backend
+choice. \emph{Left:} the five Ampere, Ada and Hopper GPUs, over each device's
+native backend set and over the backends both devices of a pair ran on that
+workload, with winners and separation re-derived inside the restricted set.
+\emph{Right:} all six GPUs, over ordered source-to-target pairs that have a
+separated winner on the source; the quantity is the target-device latency of the
+source's chosen backend divided by the target's own best. No eligible target
+timing existed for 85 of 590 forward-prefill and 287 of 1{,}974 decode source
+choices; those are counted, not costed.
 Winners differ on 27 of 64 forward-prefill and 29
 of 289 decode comparisons, yet the median transfer costs 1.002$\times$ and
 1.000$\times$, with 95th percentiles of 1.61$\times$ and 1.32$\times$;
-14\% of source choices do not run on the target at all and are counted here
-rather than dropped. Across costed source-to-target transfers the median
+ Across costed source-to-target transfers the median
 latency ratio was close to 1, while the upper tail showed larger penalties.
 The distribution mixes comparisons whose winner changed with those whose winner
 did not, so it describes the cost of carrying a choice, not the cost of a
@@ -350,12 +356,13 @@ among A10, A100, L40, L40S and H100. Restriction pulls the two regimes apart. Fo
 while decode flips on 29 of 289, interval [5, 15]. Restricting each device
 pair to the backends both devices ran, and re-deriving winners and separation
 over that restricted set rather than filtering afterwards, moves prefill to 33 of
-72 and leaves decode at 29 of 289. Figure~\ref{fig:transfer} puts those rates beside what a flip costs: the
-median transferred choice is 1.002$\times$ the target's own best in prefill
-and 1.000$\times$ in decode, so most flips are between backends that are
-practically interchangeable on the target. The restriction is what controls for
-FlashAttention 3 existing only on H100 and FlashInfer being absent on the RTX
-5090, and it does not rescue prefill.
+72 and changes decode to 27 of 289, 9.3\%. Figure~\ref{fig:transfer} puts those rates beside what a flip costs: the
+median transferred choice is 1.002$\times$ the target's own best in prefill and
+1.000$\times$ in decode. That distribution includes comparisons whose winner did
+not change, so it describes the cost of carrying a choice rather than the cost of
+a flip. The common-set restriction removes backends one device of the pair never
+ran on that workload, FlashAttention 3 among them, and it does not lower the
+prefill rate.
 
 \paragraph{RTX 5090 comparisons under the tested build.} The lower half of Table~\ref{tab:flips}
 repeats the calculation for the five pairs including the RTX 5090. The decode rate stays high, at 63 of 85, while forward prefill is 16 of 30.
@@ -393,10 +400,10 @@ contributes to several pairs.}
 \label{tab:flips}
 \end{table}
 
-\section{Mechanism: which binaries shipped}
+\section{Backend availability under the tested builds}
 \label{sec:mech}
 
-\paragraph{The decode leader does not run on Blackwell.} FlashInfer
+\paragraph{FlashInfer produced no usable timing on RTX 5090.} FlashInfer
 is the decode winner on 128 of 191 cells on A10, 133 of 192 on A100, 131 of 244
 on H100 and 87 of 192 on L40, though only 49 of 192 on L40S, where the
 SDPA path leads instead. On the RTX 5090 it wins nothing because it never
@@ -410,9 +417,10 @@ the fallback: the RTX 5090's decode winner is
 \paragraph{The wheels themselves.} Table~\ref{tab:prov} is a coverage map, not a
 performance result. Its first two rows are the packaging asymmetry the prefill
 flip rates sit beside:
-FlashAttention 2 is the prefill winner on 43 of 144 A10 cells, 85 of 144 A100
-cells and 72 of 144 RTX 5090 cells, and on H100 it wins none of the 159 while
-FlashAttention 3 takes 81. That pattern is \emph{consistent with} the packaging
+Over forward-only prefill, FlashAttention 2 is the winner on 35 of 72 A100
+cells, 13 of 72 on the RTX 5090, 2 of 72 on L40 and none on A10 or L40S; on H100
+it wins none of the 87 while FlashAttention 3 takes 48. Counts pooling forward
+with forward-plus-backward differ substantially and are not used here. That pattern is \emph{consistent with} the packaging
 but not shown to be caused by it: we did not rebuild flash-attn for the missing
 targets. FlashInfer is the other kind of gap: it JITs, so
 its coverage belongs to the toolkit on the host, not to the wheel. We report its
@@ -420,7 +428,6 @@ sm\_120 failure and not a cause: every other library in the audit carries native
 sm\_120 SASS built under the same CUDA 12.8, so a blanket claim that the toolkit
 cannot target sm\_120 is contradicted by the audit's own rows.
 
-\input{tab_avail}
 
 
 \section{Threats to validity}
@@ -436,13 +443,15 @@ cells are attempted rather than how a cell is timed. The revision label
 therefore does not mark a change in what was measured, and we do not treat it
 as one. Driver and host are the real covariates, and they cannot be separated
 from device in this design: each device was measured on the host that had it.
-Neither label predicts disagreement. The L40 rows share driver 595.71.05 with
+The L40 rows share driver 595.71.05 with
 A10 and A100 yet carry the later commit, and A10 against L40 flips on 0 of 36
 separated comparisons while H100 against L40, one commit and two drivers apart,
-flips on 9 of 33. What predicts the decode flip rate is which architectures are
-being compared, which is the decomposition reported in Section~\ref{sec:port}.
+flips on 9 of 33. We report these as observations; the design does not separate
+architecture from driver and host, so we do not claim which of them the
+difference follows.
 A single-host replication of the whole grid would still be worth having, and we
-did not have six identical hosts. Prefill is clean in that sense: all six devices ran prefill at one commit.
+did not have six identical hosts. All six devices did run prefill at one
+harness commit.
 A100 prefill was however re-measured on a rented host, driver 580.126.16,
 after the cluster run reached only one usable process repeat, so that device's
 two regimes come from two hosts. No comparison crosses the boundary, since
@@ -451,7 +460,7 @@ measured copy bandwidth within 0.05\% of each other.
 
 \paragraph{Thin repeats, and an expensive restriction.} L40 has 3 designed
 process repeats against 5 on every other device, and a realised median of 2,
-though its cell coverage is complete. Across the dataset 1 of 11{,}858 usable
+though its cell coverage is complete. Across the dataset 1 of 11{,}835 usable
 triples has a single process repeat, and for it the bootstrap has nothing to
 resample, so its CI width of 0 is an artefact. Requiring a separated winner on both sides is a
 heavy restriction: it leaves 64 of the 720 forward-prefill and 289 of the 1916
@@ -465,19 +474,12 @@ trace and 26 of 651 dispatch classes have no probed row at all, so the 0.449\%
 mismatch rate is a rate among probed rows. On the unprobed rows the answer is
 unknown, not zero.
 
-\paragraph{Two floors under the measurement.} On L40 the median ratio of
-effective KV traffic to that host's measured peak copy bandwidth is 1.038, so
-the peak probe under-reads what the decode kernels sustain there. No L40 number
-should be read as a fraction of achievable bandwidth: the effective GB/s
-stands, the ratio does not. On H100 the fastest usable cell is 6.34 \us{} and 153 of its 2{,}474 triples sit
-within 5$\times$ of the 5.088 \us{} CUDA-event pair overhead. That comparison
-crosses timers and we do not draw a floor from it: 152 of those 153 triples are
-\code{do\_bench\_cudagraph} cells, while 5.088 \us{} is a \code{block\_bench}
-event-pair cost. What the two together do establish is that at the small-batch,
-short-context, CUDA-graph end of the decode grid the winner margins are of the
-same order as the timing machinery, and we have not measured that end well
-enough to rank it. Those cells are reported and are not used to support any
-portability claim.
+\paragraph{What the derived quantities do not establish.} Effective KV
+bandwidth is an analytic byte count divided by measured latency, not measured
+DRAM traffic. Its ratio to the copy benchmark does not establish bandwidth
+saturation. Eager and CUDA-graph measurements use different timing routines, and
+a bare CUDA-event overhead is not a per-call resolution threshold. We therefore
+do not infer a timing floor from that comparison.
 
 \paragraph{What was not measured.} Every cloud host we rented blocked
 Nsight Compute and Nsight Systems, so no occupancy, cache-hit-rate or
@@ -494,13 +496,18 @@ property of the implementation, and a benchmark naming none of the device, the
 regime and the distribution has under-specified its result. Two practical
 consequences follow. A serving system that fixes its attention backend by
 preference order should re-measure that order on each deployment target, since
-the orderings that transfer here are the decode ones, and only within the
-architectures for which the installed libraries ship native code. And a
+the orderings that changed least here were the decode ones. And a
 reported winner should carry the margin separating it from the runner-up,
 because the criterion was met on only 128 of 447 forward-prefill and 409 of 1203
 decode configurations measured here.
 
 \appendix
+\section{Backend availability}
+\label{app:avail}
+Table~\ref{tab:avail} lists which comparisons were possible at all.
+
+\input{tab_avail}
+
 \section{Binary provenance}
 \label{app:prov}
 The audit records which architectures the installed wheels carry native code

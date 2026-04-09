@@ -87,7 +87,7 @@ def fig_separation(L, out, name="figA_separation.pdf"):
     ax2.set_xlabel("practical margin")
     ax2.set_ylabel("separated (%)")
     ax2.set_ylim(0, 60)
-    ax2.set_title("B  Margin sensitivity, pooled over all devices", loc="left")
+    ax2.set_title("B  Margin sensitivity", loc="left")
     return save(fig, out, name)
 
 
@@ -177,13 +177,11 @@ def fig_transfer(L, rows, out, name="figB_transfer.pdf"):
     ax2.set_ylim(0, 1)
     ax2.legend(frameon=False, loc="lower right", fontsize=6)
     ax2.set_title("B  Cost of transferring the choice", loc="left")
-    # In the axes rather than the title: as a two-line title this ran past the
-    # right edge of the figure and was clipped.
-    note = "\n".join(
-        "%s: %d of %d source choices had no eligible target timing"
-        % (k, u[0], u[1]) for k, u in sorted(unavail.items()))
-    ax2.text(0.02, 0.97, note, transform=ax2.transAxes, va="top", ha="left",
-             fontsize=5.5, color="#444")
+    # Coverage belongs in the caption: inside the axes it overlapped the
+    # curves and shrank past legibility at column width.
+    print("  caption coverage: " + "; ".join(
+        "%s %d of %d source choices had no eligible target timing"
+        % (k, u[0], u[1]) for k, u in sorted(unavail.items())))
     return save(fig, out, name)
 
 

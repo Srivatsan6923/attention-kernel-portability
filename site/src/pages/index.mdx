@@ -8,9 +8,9 @@ readTime: '19 min read'
 links:
   - label: Code
     href: https://github.com/Srivatsan6923/attention-kernel-portability
-  - label: Technical report
-    href: https://github.com/Srivatsan6923/attention-kernel-portability/blob/main/README.md
-  - label: Raw results
+  - label: Paper
+    href: https://github.com/Srivatsan6923/attention-kernel-portability/blob/main/paper/main.pdf
+  - label: Chart data
     href: /data/web.json
   - label: Reproduce
     href: https://github.com/Srivatsan6923/attention-kernel-portability#reproduce
@@ -37,10 +37,6 @@ export const at = (metric, gpu, impl, x) => {
 	const i = s.x.indexOf(x);
 	return i < 0 ? null : s.y[i];
 };
-export const bestFixed = Object.entries(web.selector.vs_fixed || {})
-  .map(([k, v]) => ({ name: k, ...v }))
-  .sort((x, y) => x.median - y.median)[0] || { median: NaN, p95: NaN, coverage: NaN };
-export const best = bestFixed;
 export const P = (regime, a, b) => web.pairs.find((p) => p.regime === regime && p.a === a && p.b === b);
 export const covOf = (impl, status) =>
 	web.coverage.filter((c) => c.implementation === impl && c.status === status).reduce((t, c) => t + c.n, 0);
@@ -102,7 +98,18 @@ export const longPrefillN = Math.max(...prefillN);
 
 ## Summary
 
-Across {n0(web.headline.cells)} matched cells on {web.headline.devices} GPUs spanning Ampere, Ada, Hopper and Blackwell, only {pct(web.separation.overall)} have a fastest implementation that both a bootstrap confidence interval and a {thr}% practical threshold separate from second place, and among those the median winner leads by {((PF.median_ratio - 1) * 100).toFixed(1)}% in prefill (n={PF.n}) and {((DC.median_ratio - 1) * 100).toFixed(1)}% in decode (n={DC.n}). Restricted to separated cells the fastest decode path survives a change of device among Ampere, Ada and Hopper ({pct(P('decode', 'A100', 'L40').flip_sep)} of {P('decode', 'A100', 'L40').n_sep} cells change winner between A100 and L40, {pct(P('decode', 'A100', 'H100').flip_sep)} of {P('decode', 'A100', 'H100').n_sep} between A100 and H100) and fails against Blackwell ({pct(P('decode', 'H100', 'RTX 5090').flip_sep)} of {P('decode', 'H100', 'RTX 5090').n_sep} between H100 and the RTX 5090), because the library that leads decode elsewhere does not run there at all. The fastest prefill path does not transfer in the first place ({pct(P('prefill', 'A100', 'H100').flip_sep)} of {P('prefill', 'A100', 'H100').n_sep} cells change winner between A100 and H100). Dispatch probes disagreed with the requested backend on {web.headline.dispatch_mismatch_pct.toFixed(3)}% of the rows that were probed, but {(100 - web.headline.probed_pct).toFixed(1)}% of cells were never probed at all and the gap is worst on the fastest library paths, so the mismatch rate there is unknown rather than zero.
+We benchmarked forward-prefill and single-token KV-cache attention across six
+NVIDIA GPUs spanning four architecture families and five compute capabilities.
+A fastest backend met both the 10% practical margin and the bootstrap
+separation criterion in 128 of 447 forward-prefill configurations and 409 of 1203
+decode configurations. Among eligible Ampere/Ada/Hopper comparisons the
+selected backend changed in 27 of 64 prefill comparisons and 29 of 289 decode
+comparisons. Median transfer latency ratios were close to 1 (1.002 prefill,
+1.000 decode), but the upper tails showed larger penalties (1.61 and 1.32 at the
+95th percentile). No eligible target timing existed for 85 of 590 prefill and 287
+of 1974 decode source choices. These results describe the tested workloads and
+software environments; they do not isolate GPU architecture from host and
+driver differences.
 
 The question this sweep was built to answer is narrow: if a serving stack picks one attention implementation on the hardware it was tuned on, how much does that choice cost on a different part, and can the measurement even tell.
 
@@ -144,7 +151,7 @@ The question this sweep was built to answer is narrow: if a serving stack picks 
 
 ## Experimental scope
 
-Five devices, three architectures, one harness. The event floor is the measured CUDA-event timing resolution on that host, and it sets the smallest latency difference the harness can resolve there. Bandwidth is the vendor figure for the part, used only to put achieved numbers in context; it is not a measurement from these runs.
+Six GPUs spanning four architecture families and five compute capabilities. Bandwidth is a copy benchmark measured in-process on that host, not a vendor figure.
 
 <ResearchTable caption={`The ${web.devices.length} devices in the sweep, all analysed at commit ${web.devices[0].sha}. L40S and H100 sit on different driver builds than the rest, which is a confound for anything compared across those panels.`}>
 
@@ -185,7 +192,7 @@ The grid has two regimes. Prefill runs batch {prefillB.join(', ')} against seque
 
 ## Implementation provenance
 
-Splitting authored code from integrated code matters here, because a fair share of this result is a statement about library builds rather than about kernels written for this study.
+Splitting authored code from integrated code matters here. `P3-triton` is a vendored Triton tutorial kernel with a local BF16 modification, not a kernel written for this project, and no custom CUDA kernel authorship is claimed.
 
 Written for this project: the PyTorch reference (`P0-naive`, `D0-naive-kv`), which materialises the score matrix and exists as a correctness anchor rather than a contender; the `torch.compile` variants (`P1-inductor` with its `nofuse` and `where` spellings, and `D1-inductor`), which are compilation configurations of that reference; the SDPA call sites (`P2b-sdpa-mem-eff`, `P2c-sdpa-flash`, `P2d-sdpa-cudnn`, `D2-sdpa`), which force one PyTorch backend each and therefore measure the backend PyTorch dispatches into rather than code written here; and `P3-triton`, a Triton attention kernel carrying a local BF16 modification made for this sweep.
 
@@ -266,7 +273,7 @@ Probe coverage is also uneven across devices, and the device with the thinnest c
 	<thead>
 		<tr>
 			<th>GPU</th>
-			<th class="num">Cells probed (%)</th>
+			<th class="num">Rows probed (%)</th>
 			<th class="num">Mismatch of probed (%)</th>
 		</tr>
 	</thead>
@@ -413,13 +420,13 @@ Normalising against one baseline makes the shape of the win clearer, and the abs
 
 ## Decode and the KV cache
 
-Single-token decode does very little arithmetic and moves the whole cache, so the useful model is bytes rather than FLOPs. The cache traffic for one decode step is
+Single-token decode does very little arithmetic and reads the whole cache, so the useful model is bytes rather than FLOPs. The **KV-cache footprint**, an idealised one-read byte count for a decode step, is
 
 $$
 \text{bytes} \;=\; 2 \, B \, H_{kv} \, N \, D \, s
 $$
 
-with $B$ the batch, $H_{kv}$ the number of KV heads, $N$ the KV length, $D$ the head dimension, $s$ the bytes per element (2 for bf16), and the leading factor 2 counting the K and V tensors. The effective bandwidth below is that analytic byte count divided by measured time. It is a model rather than a profiler reading, and the byte model differs between implementations, so effective bandwidth compares one implementation against itself across shapes far more safely than it compares two implementations at one shape.
+with $B$ the batch, $H_{kv}$ the number of KV heads, $N$ the KV length, $D$ the head dimension, $s$ the bytes per element (2 for bf16), and the leading factor 2 counting the K and V tensors. This is a footprint, not a measurement of bytes moved from DRAM: its size alone does not establish the traffic a kernel actually generates. The effective bandwidth below is that analytic byte count divided by measured time. It is a model rather than a profiler reading, and the byte model differs between implementations, so effective bandwidth compares one implementation against itself across shapes far more safely than it compares two implementations at one shape.
 
 Every decode comparison across devices in this section is confounded. The A10 and A100 decode rows were collected under a different commit and driver than the H100 and L40 rows, so a panel-to-panel change mixes hardware with software provenance and cannot be attributed to architecture alone. Prefill has no such split.
 
@@ -546,9 +553,9 @@ counted separately rather than filled in with the target's own best.
 
 ## Portability
 
-This is the result the sweep was built for. A flip rate answers whether a choice made on one device survives a move to another, and it is interpretable only with two things attached: the number of cells it was computed over, and whether those cells had a winner worth naming in the first place.
+This is the result the sweep was built for. A flip rate answers whether a choice made on one device survives a move to another, and it is interpretable only with two things attached: the number of configurations it was computed over, and whether those configurations met the separation criterion.
 
-Of {n0(web.headline.cells)} matched cells, {pct(web.separation.overall)} have a winner separated from second place by both the bootstrap CI and the {thr}% practical threshold: {pct(PF.separated)} of {PF.n} prefill cells and {pct(DC.separated)} of {DC.n} decode cells. In the remaining majority the fastest implementation is fastest by an amount the measurement cannot defend, so a raw flip rate over all cells is partly counting noise reordering itself. The restricted rate, computed over separated cells only, is the number to read.
+Of {n0(web.headline.cells)} matched cells, {pct(web.separation.overall)} have a winner separated from second place by both the bootstrap CI and the {thr}% practical threshold: {pct(PF.separated)} of {PF.n} prefill cells and {pct(DC.separated)} of {DC.n} decode cells. In the remainder the separation criterion was not met, which is not the same as the backends being equal. The restricted rate, computed over separated configurations only, is the number to read.
 
 <ResearchFigure
 	number={6}
@@ -621,40 +628,10 @@ Of {n0(web.headline.cells)} matched cells, {pct(web.separation.overall)} have a 
 
 </ResearchTable>
 
-A fitted selector is reported here as a diagnostic, not as a contribution. Its regret is conditional: predictions naming a backend that does not run on the held-out cell are dropped by the reduction rather than counted, so the figures below describe the cells where the rule had something runnable to say. Read it as evidence about how much the choice matters, not as a proposed method. If the winner does not transfer, the alternative is to predict it. A shallow decision tree over device bandwidth, sequence length, batch and the grouped-query ratio picks the exactly-correct implementation on {pct(web.selector.accuracy)} of {n0(web.selector.n)} cells, which sounds worse than it costs: median regret against the per-cell best is {web.selector.median_regret.toFixed(3)}x, so a typical wrong pick gives up {((web.selector.median_regret - 1) * 100).toFixed(1)}% of latency. The tail is where the cost lives, at {web.selector.p95_regret.toFixed(3)}x at p95.
-
-<ResearchTable caption={`Regret against the per-cell best over ${n0(web.selector.n)} cells. Coverage is the fraction of cells on which that fixed policy can run at all, which is why no fixed prefill policy covers more than about half the grid.`}>
-
-<table>
-	<thead>
-		<tr>
-			<th>Policy</th>
-			<th class="num">Median regret (x)</th>
-			<th class="num">p95 regret (x)</th>
-			<th class="num">Coverage (%)</th>
-		</tr>
-	</thead>
-	<tbody>
-		<tr>
-			<td><strong>Fitted selector</strong></td>
-			<td class="num">{web.selector.median_regret.toFixed(3)}</td>
-			<td class="num best">{web.selector.p95_regret.toFixed(3)}</td>
-			<td class="num best">100.0</td>
-		</tr>
-		{Object.entries(web.selector.vs_fixed).map(([policy, v]) => (
-			<tr>
-				<td>Always <code>{policy}</code></td>
-				<td class="num">{v.median.toFixed(3)}</td>
-				<td class="num">{v.p95.toFixed(3)}</td>
-				<td class="num">{(100 * v.coverage).toFixed(1)}</td>
-			</tr>
-		))}
-	</tbody>
-</table>
-
-</ResearchTable>
-
-The policies that clear the coverage filter are named in the table above rather than in this sentence, because which ones qualify changes with the device set: refitting on six GPUs replaced the prefill policies with decode ones. Over the cells it can serve, the strongest fixed policy costs a median {best.median.toFixed(3)}x with a p95 of {best.p95.toFixed(3)}x at {(100 * best.coverage).toFixed(0)}% coverage, against the selector's {web.selector.median_regret.toFixed(3)}x median and {web.selector.p95_regret.toFixed(3)}x p95 across every regime. A selector earns its complexity in the tail and across regimes, not in the median.
+The fitted-selector diagnostic that previously sat here has been removed. Its
+regret was conditional on the held-out cells where its prediction was runnable
+at all, while its coverage column reported 100%, and it is not needed for the
+question this page answers.
 
 ## Deployment guidance
 
@@ -699,8 +676,8 @@ The table reports the implementation that took the most cells per device and reg
 
 <Observation
 	items={[
-		`A modal winner is not an instruction. Only ${pct(web.separation.overall)} of ${n0(web.headline.cells)} cells have a winner clearing both the bootstrap CI and the ${thr}% practical threshold, so on most cells behind this table the second-place implementation is an equally defensible choice, and picking on the mode alone looks like a decision when it is closer to a coin flip.`,
-		`The decode rows in this table are not a clean device comparison: A10 and A100 decode was collected under a different commit and driver than H100 and L40. ${(100 - web.headline.probed_pct).toFixed(1)}% of cells were never dispatch-probed, so on those rows there is no evidence the intended kernel ran, and every number is scoped to torch ${web.software.torch}, CUDA ${web.software.cuda}, Triton ${web.software.triton}, flash-attn ${web.software.flash_attn} and FlashInfer ${web.software.flashinfer}. A library upgrade invalidates this ranking sooner than a hardware change does.`,
+		`A modal winner is not an instruction. Only ${pct(web.separation.overall)} of ${n0(web.headline.cells)} cells have a winner clearing both the bootstrap CI and the ${thr}% practical threshold, so on most cells behind this table the second-place implementation is an equally defensible choice, and picking on the mode alone reads as a decision where the criterion did not establish one.`,
+		`The decode rows in this table are not a clean device comparison: A10 and A100 decode was collected under a different commit and driver than H100 and L40. ${(100 - web.headline.probed_pct).toFixed(1)}% of cells were never dispatch-probed, so on those rows there is no evidence the intended kernel ran, and every number is scoped to torch ${web.software.torch}, CUDA ${web.software.cuda}, Triton ${web.software.triton}, flash-attn ${web.software.flash_attn} and FlashInfer ${web.software.flashinfer}. These results are scoped to those versions; we ran no version sweep and so make no claim about how a library upgrade compares with a hardware change.`,
 	]}
 />
 
