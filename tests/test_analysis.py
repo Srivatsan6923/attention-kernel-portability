@@ -152,10 +152,21 @@ def test_ratio_and_interval_use_one_population():
     a = [100.0, 100.0, 100.0, 5000.0, 5000.0]   # ids 0,1,2,7,8
     b = [100.0] * 5                              # ids 0..4
     ratio, lo, hi, n = analysis.paired_ratio_ci(
-        a, b, ids_a=[0, 1, 2, 7, 8], ids_b=[0, 1, 2, 3, 4])
+        a, b, ids_a=[0, 1, 2, 7, 8], ids_b=[0, 1, 2, 3, 4],
+        strict_pairing=False)
     assert n == 3, "only the shared launches are comparable"
     assert ratio == 1.0, "estimate must come from the same 3 launches"
     assert lo == hi == 1.0
+
+
+def test_mismatched_launch_sets_are_refused_by_default():
+    """The paper asserts compared backends share a launch set, which holds in
+    all 2,082 cells here. A future sweep that breaks it must fail loudly rather
+    than rank on one population and build its interval on another."""
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="launch sets differ"):
+        analysis.paired_ratio_ci([1.0] * 5, [1.0] * 5,
+                                 ids_a=[0, 1, 2, 7, 8], ids_b=[0, 1, 2, 3, 4])
 
 
 def test_one_launch_cannot_produce_a_separated_winner():

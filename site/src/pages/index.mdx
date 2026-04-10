@@ -91,7 +91,7 @@ export const longPrefillN = Math.max(...prefillN);
 		{
 			value: `1.000x`,
 			label: 'Median cost of transferring a decode choice',
-			detail: `p95 1.32x; 15%% of source choices do not exist on the target`,
+			detail: `p95 1.32x; 287/1974 source choices had no eligible target timing`,
 		},
 	]}
 />
@@ -141,7 +141,7 @@ The question this sweep was built to answer is narrow: if a serving stack picks 
 		</tr>
 		<tr>
 			<td>What does a fixed choice cost?</td>
-			<td>Regret of a fitted selector and of each fixed policy against the per-cell best, median and p95</td>
+			<td>Source-to-target transfer latency ratio: the target's time for the source's chosen backend over the target's own best</td>
 			<td>Deployment guidance</td>
 		</tr>
 	</tbody>
@@ -165,7 +165,6 @@ Six GPUs spanning four architecture families and five compute capabilities. Band
 			<th class="num">Memory (GB)</th>
 			<th class="num">L2 (MB)</th>
 			<th class="num">Bandwidth (GB/s)</th>
-			<th class="num">Event floor (us)</th>
 			<th>Driver</th>
 		</tr>
 	</thead>
@@ -179,7 +178,6 @@ Six GPUs spanning four architecture families and five compute capabilities. Band
 				<td class="num">{d.mem_gb.toFixed(1)}</td>
 				<td class="num">{d.l2_mb.toFixed(1)}</td>
 				<td class="num">{d.bw_gbs.toFixed(0)}</td>
-				<td class="num">{d.event_us.toFixed(2)}</td>
 				<td>{d.driver}</td>
 			</tr>
 		))}
@@ -194,7 +192,7 @@ The grid has two regimes. Prefill runs batch {prefillB.join(', ')} against seque
 
 Splitting authored code from integrated code matters here. `P3-triton` is a vendored Triton tutorial kernel with a local BF16 modification, not a kernel written for this project, and no custom CUDA kernel authorship is claimed.
 
-Written for this project: the PyTorch reference (`P0-naive`, `D0-naive-kv`), which materialises the score matrix and exists as a correctness anchor rather than a contender; the `torch.compile` variants (`P1-inductor` with its `nofuse` and `where` spellings, and `D1-inductor`), which are compilation configurations of that reference; the SDPA call sites (`P2b-sdpa-mem-eff`, `P2c-sdpa-flash`, `P2d-sdpa-cudnn`, `D2-sdpa`), which force one PyTorch backend each and therefore measure the backend PyTorch dispatches into rather than code written here; and `P3-triton`, a Triton attention kernel carrying a local BF16 modification made for this sweep.
+Written for this project: the PyTorch reference (`P0-naive`, `D0-naive-kv`), which materialises the score matrix and exists as a correctness anchor rather than a contender; the `torch.compile` variants (`P1-inductor` with its `nofuse` and `where` spellings, and `D1-inductor`), which are compilation configurations of that reference; and the SDPA call sites (`P2b-sdpa-mem-eff`, `P2c-sdpa-flash`, `P2d-sdpa-cudnn`, `D2-sdpa`), which force one PyTorch backend each and therefore measure the backend PyTorch dispatches into rather than code written here.
 
 Integrated and measured, not authored: `P4-fa2`, `P4h-fa3`, `D3-fa-kvcache`, `D6-fa-prefill-at-1` and `D4-flashinfer` are calls into prebuilt CUDA libraries, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. Nothing inside those paths was modified. Where one of them wins, the finding is about that library build on that device at this software snapshot, and it does not transfer to another version of the same library.
 
@@ -290,7 +288,7 @@ Probe coverage is also uneven across devices, and the device with the thinnest c
 
 </ResearchTable>
 
-One dispatch result is worth stating on its own. The Inductor fused-attention counter fired on {web.dispatch.inductor_counter_fired} of {n0(web.dispatch.inductor_rows)} compiled rows, so `torch.compile` did not rewrite the reference implementation into a fused attention call anywhere in this sweep. The compiled rows that were probed report a `triton` flow ({n0(flowN('P1-inductor', 'triton'))} rows for `P1-inductor`), which is generated pointwise and matmul code around the same materialised score matrix rather than a fused attention kernel. Whatever `P1-inductor` costs, it is not the cost of a compiler-discovered flash attention.
+One dispatch result is worth stating on its own. The attention-fusion counter was zero in all {n0(web.dispatch.inductor_rows)} rows where it was captured. However, 45 profiled Inductor rows on H100 contained a flash-attention kernel. These observations distinguish the recorded compiler counter from the kernel that executed. The compiled rows that were probed otherwise report a `triton` flow ({n0(flowN('P1-inductor', 'triton'))} rows for `P1-inductor`), which is generated pointwise and matmul code around the same materialised score matrix.
 
 Correctness was checked against the reference on a subsample of configurations. No implementation failed.
 
@@ -352,9 +350,8 @@ Prefill is compute-shaped and commit-homogeneous: every prefill row in this swee
 			takes {sig(at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', 256))} us and FlashAttention-3 takes
 			{' '}{sig(at('prefill_latency', 'H100', 'P4h-fa3', 256))} us, with FlashAttention-2 at
 			{' '}{sig(at('prefill_latency', 'H100', 'P4-fa2', 256))} us and the Triton kernel at
-			{' '}{sig(at('prefill_latency', 'H100', 'P3-triton', 256))} us. These are tens of microseconds above an event floor of
-			{' '}{dev('H100').event_us.toFixed(2)} us, so the short-N ranking is sensitive to launch and setup cost rather than to
-			kernel throughput.
+			{' '}{sig(at('prefill_latency', 'H100', 'P3-triton', 256))} us. At this length the four are separated by tens of
+			microseconds, which is small relative to the fixed per-call work these measurements include.
 		</li>
 		<li>
 			On A10 at N={n0(longPrefillN)} the local Triton kernel is fastest at {sig(at('prefill_latency', 'A10', 'P3-triton', longPrefillN))} us,
@@ -409,12 +406,6 @@ Normalising against one baseline makes the shape of the win clearer, and the abs
 			appears on no other panel: {n0(covOf('P4h-fa3', 'UNSUPPORTED'))} of its {n0(covAll('P4h-fa3'))} rows are
 			`UNSUPPORTED` because the build declines pre-Hopper parts. It is a Hopper result, not a portable one.
 		</li>
-		<li>
-			Ratios at short N sit close to the timing floor of the host, which ranges from
-			{' '}{Math.min(...web.devices.map((d) => d.event_us)).toFixed(2)} us to
-			{' '}{Math.max(...web.devices.map((d) => d.event_us)).toFixed(2)} us across these {web.headline.devices} devices. A cell
-			whose absolute latency is within a small multiple of that floor should be read as unresolved whatever its ratio says.
-		</li>
 	</Observation>
 </ResearchFigure>
 
@@ -462,7 +453,7 @@ Every decode comparison across devices in this section is confounded. The A10 an
 			{' '}{sig(at('decode_latency_b32', 'H100', 'D4-flashinfer', longN))} us and the reference
 			{' '}{sig(at('decode_latency_b32', 'H100', 'D0-naive-kv', longN))} us. The FlashAttention path there moves
 			{' '}{sig(at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN))} GB/s of modelled KV traffic against the
-			{' '}{dev('H100').bw_gbs.toFixed(0)} GB/s vendor figure for the part,
+			{' '}{dev('H100').bw_gbs.toFixed(0)} GB/s measured copy-benchmark bandwidth,
 			{' '}{((100 * at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN)) / dev('H100').bw_gbs).toFixed(0)}% of it under the
 			analytic byte model.
 		</li>
@@ -555,7 +546,7 @@ counted separately rather than filled in with the target's own best.
 
 This is the result the sweep was built for. A flip rate answers whether a choice made on one device survives a move to another, and it is interpretable only with two things attached: the number of configurations it was computed over, and whether those configurations met the separation criterion.
 
-Of {n0(web.headline.cells)} matched cells, {pct(web.separation.overall)} have a winner separated from second place by both the bootstrap CI and the {thr}% practical threshold: {pct(PF.separated)} of {PF.n} prefill cells and {pct(DC.separated)} of {DC.n} decode cells. In the remainder the separation criterion was not met, which is not the same as the backends being equal. The restricted rate, computed over separated configurations only, is the number to read.
+Of {n0(web.headline.cells)} matched configurations, {pct(PF.separated)} of {PF.n} forward-prefill and {pct(DC.separated)} of {DC.n} decode have a winner separated from second place by both the bootstrap lower bound and the {thr}% practical margin. In the remainder the separation criterion was not met, which is not the same as the backends being equal. The restricted rate, computed over separated configurations only, is the number to read.
 
 <ResearchFigure
 	number={6}
@@ -567,12 +558,11 @@ Of {n0(web.headline.cells)} matched cells, {pct(web.separation.overall)} have a 
 	<PortabilityFlip />
 	<Observation slot="observations">
 		<li>
-			Prefill does not transfer between Ampere and Hopper. A100 against H100 flips the winner on
-			{' '}{pct(P('prefill', 'A100', 'H100').flip_sep)} of {P('prefill', 'A100', 'H100').n_sep} separated cells
-			({pct(P('prefill', 'A100', 'H100').flip)} of {P('prefill', 'A100', 'H100').n} raw), and L40 against H100 on
-			{' '}{pct(P('prefill', 'L40', 'H100').flip_sep)} of {P('prefill', 'L40', 'H100').n_sep} separated cells
-			({pct(P('prefill', 'L40', 'H100').flip)} of {P('prefill', 'L40', 'H100').n} raw). Restricting to separated cells makes
-			the prefill picture worse rather than better: where the difference is real, it is real in a different direction.
+Forward prefill changes winner on 27 of 64 comparisons that are separated on
+			both GPUs, pooled over the ten Ampere/Ada/Hopper device pairs. Individual
+			pairs are thin once the criterion is applied: A100 against H100 retains only
+			{P('prefill', 'A100', 'H100').n_sep} of {P('prefill', 'A100', 'H100').n}
+			configurations, too few to read as a rate on its own.
 		</li>
 		<li>
 			Decode mostly transfers. A100 against L40 flips on {pct(P('decode', 'A100', 'L40').flip_sep)} of
@@ -588,7 +578,7 @@ Of {n0(web.headline.cells)} matched cells, {pct(web.separation.overall)} have a 
 			{' '}{pct(P('prefill', 'L40', 'L40S').flip_sep)} of only {P('prefill', 'L40', 'L40S').n_sep} separated cells
 			({pct(P('prefill', 'L40', 'L40S').flip)} of {P('prefill', 'L40', 'L40S').n} raw). That separated denominator is too
 			small to carry a conclusion, and the two parts sit on different driver builds ({dev('L40').driver} against
-			{' '}{dev('L40S').driver}), so this pair measures driver as much as silicon.
+			{' '}{dev('L40S').driver}). The comparison does not isolate device effects from driver and host effects.
 		</li>
 		<li>
 			Every rate here is a fraction of cells within one device pair, in one regime, at one software snapshot, over
@@ -627,11 +617,6 @@ Of {n0(web.headline.cells)} matched cells, {pct(web.separation.overall)} have a 
 </table>
 
 </ResearchTable>
-
-The fitted-selector diagnostic that previously sat here has been removed. Its
-regret was conditional on the held-out cells where its prediction was runnable
-at all, while its coverage column reported 100%, and it is not needed for the
-question this page answers.
 
 ## Deployment guidance
 
@@ -676,7 +661,7 @@ The table reports the implementation that took the most cells per device and reg
 
 <Observation
 	items={[
-		`A modal winner is not an instruction. Only ${pct(web.separation.overall)} of ${n0(web.headline.cells)} cells have a winner clearing both the bootstrap CI and the ${thr}% practical threshold, so on most cells behind this table the second-place implementation is an equally defensible choice, and picking on the mode alone reads as a decision where the criterion did not establish one.`,
+		`A modal winner is not an instruction. A minority of the ${n0(web.headline.cells)} matched configurations have a winner clearing both the bootstrap lower bound and the ${thr}% practical margin, so on most cells behind this table the second-place implementation is an equally defensible choice, and picking on the mode alone reads as a decision where the criterion did not establish one.`,
 		`The decode rows in this table are not a clean device comparison: A10 and A100 decode was collected under a different commit and driver than H100 and L40. ${(100 - web.headline.probed_pct).toFixed(1)}% of cells were never dispatch-probed, so on those rows there is no evidence the intended kernel ran, and every number is scoped to torch ${web.software.torch}, CUDA ${web.software.cuda}, Triton ${web.software.triton}, flash-attn ${web.software.flash_attn} and FlashInfer ${web.software.flashinfer}. These results are scoped to those versions; we ran no version sweep and so make no claim about how a library upgrade compares with a hardware change.`,
 	]}
 />
@@ -693,4 +678,4 @@ python -m akp.figures     # static figure PDFs into site/public/figures
 python -m akp.webdata     # site/public/data/web.json, the only source this page reads
 ```
 
-Nothing here is typed in by hand. Every value in the prose, the tables and the figures is read from <a href="/data/web.json">web.json</a> at build or run time, so regenerating that file regenerates the article.
+Values in the tables and figures are read from <a href="/data/web.json">web.json</a> at build or run time. The summary paragraph above is currently written out rather than generated, so regenerating the data does not rewrite it.

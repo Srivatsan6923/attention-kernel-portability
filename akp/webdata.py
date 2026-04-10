@@ -14,7 +14,8 @@ import os
 import numpy as np
 import pandas as pd
 
-from akp.analysis import (PRACTICAL, paired_ratio_ci, per_cell_median, usable)
+from akp.analysis import (PRACTICAL, paired_ratio_ci, per_cell_median,
+                          separated, usable)
 
 SHORT = {"NVIDIA A10": "A10", "NVIDIA A100-SXM4-80GB": "A100",
          "NVIDIA H100 80GB HBM3": "H100", "NVIDIA L40": "L40",
@@ -88,8 +89,15 @@ def main(argv=None):
     sel = json.load(open(os.path.join(P, "selector.json"), encoding="utf8"))
     audit = pd.read_parquet(os.path.join(P, "dispatch_audit.parquet"))
     ok = rows[rows.status == "OK"]
-    cells = per_cell_median(usable(rows))
-    cells["regime"] = cells.cell.str.split("|").str[0]
+    cells_all = per_cell_median(usable(rows))
+    cells_all["regime"] = cells_all.cell.str.split("|").str[0]
+    cells_all["mode"] = cells_all.cell.str.split("|").str[7]
+    # The inference population, matching the paper and the ledger: forward
+    # prefill and decode. Forward-plus-backward is a training workload and is
+    # reported separately, never pooled into a portability number.
+    infer = (cells_all.regime == "decode") | (cells_all["mode"] == "fwd")
+    cells = cells_all[infer].copy()
+    cells_bwd = cells_all[~infer].copy()
 
     out = {"generated_from": P}
 
@@ -117,8 +125,11 @@ def main(argv=None):
     aud = audit[audit.probed]
     out["headline"] = {
         "cells": int(cells.groupby(["gpu_name", "cell"]).ngroups),
+        "cells_note": "forward prefill + decode GPU/configuration observations",
         "rows": int(len(rows)),
+        "attempt_records": int(len(rows)),
         "ok_rows": int(len(ok)),
+        "eligible_rows": int(len(usable(rows))),
         "devices": len(out["devices"]),
         "dispatch_mismatch_pct": r3(100 * (~aud.matched.fillna(True).astype(bool)).mean()),
         "probed_pct": r3(100 * audit.probed.mean()),
@@ -142,14 +153,16 @@ def main(argv=None):
             _ratio, lo, hi, _n = paired_ratio_ci(ru.samples, w.samples, **kw)
             rec["ratio"] = r3(ratio)
             rec["runner_up"] = ru.implementation
-            rec["sep"] = bool((lo > 1 or hi < 1) and ratio >= PRACTICAL)
+            rec["sep"] = separated(_ratio, lo)
         win.append(rec)
     W = pd.DataFrame(win)
+    # No pooled rate: the two regimes have different denominators and pooling
+    # them produced a headline that matched neither the paper nor either regime.
     out["separation"] = {
-        "overall": r3(W.sep.mean()),
         "by_regime": {reg: {"n": int(len(s)), "separated": r3(s.sep.mean()),
                             "median_ratio": r3(s.ratio.median())}
                       for reg, s in W.groupby("regime")},
+        "population": "forward prefill and decode; forward-plus-backward excluded",
         "practical_threshold": PRACTICAL}
 
     wmap = {(r.gpu, r.cell): (r.winner, r.sep) for r in W.itertuples()}
@@ -277,6 +290,27 @@ def main(argv=None):
                          "coverage": r3(v.get("coverage"))}
                      for k, v in (sel.get("vs_fixed") or {}).items()}}
 
+    # Supplementary: the forward-plus-backward population, kept whole so the
+    # site can show it without any main figure drawing on it.
+    wb = []
+    for (g, c), sub in cells_bwd.groupby(["gpu_name", "cell"]):
+        srt = sub.sort_values(["median_us", "implementation"])
+        w0 = srt.iloc[0]
+        sep = False
+        if len(srt) > 1:
+            ru = srt.iloc[1]
+            kw = (dict(ids_a=ru.repeat_ids, ids_b=w0.repeat_ids)
+                  if "repeat_ids" in sub.columns else {})
+            ratio, lo, _hi, _n = paired_ratio_ci(ru.samples, w0.samples, **kw)
+            sep = separated(ratio, lo)
+        wb.append({"gpu": short(g), "winner": w0.implementation, "sep": bool(sep)})
+    out["supplementary_fwd_bwd"] = {
+        "note": "prefill forward-plus-backward: a training workload, excluded "
+                "from every portability number on this page",
+        "n": len(wb),
+        "separated": r3(sum(x["sep"] for x in wb) / len(wb)) if wb else None,
+    }
+
     out["spread"] = summ.get("spread_by_regime", {})
     out["status_counts"] = summ.get("status", {})
     out["not_collected"] = [
@@ -293,7 +327,9 @@ def main(argv=None):
     print("wrote %s (%.0f kB)" % (a.out, os.path.getsize(a.out) / 1024))
     print("devices:", ", ".join(d["gpu"] for d in out["devices"]))
     print("prefill slice:", out["prefill_slice"], "| decode slice:", out["decode_slice"])
-    print("separation overall: %.3f" % out["separation"]["overall"])
+    print("separation: " + ", ".join(
+        "%s %.3f (n=%d)" % (k, v["separated"], v["n"])
+        for k, v in sorted(out["separation"]["by_regime"].items())))
     return 0
 
 

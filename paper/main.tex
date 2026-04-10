@@ -75,10 +75,10 @@ Does its winner survive a change of device?
 
 The question is usually assumed rather than measured. Serving systems fix an
 attention backend by preference order and carry that order onto every device
-they deploy on, and kernel papers report a winner on the one part their authors
-had. If the ordering belongs to the kernel, that practice is sound. If it
-belongs to the pairing of kernel and device, a preference order tuned on an
-A100 may not hold on another device.
+they deploy on. We ask whether that order holds: if the ordering belongs to the
+kernel, carrying it across devices is sound; if it belongs to the pairing of
+kernel and device, a preference order tuned on one part may not hold on
+another.
 
 We time 10 prefill and 6 decode implementations over 403 configurations on the
 six GPUs of Table~\ref{tab:devices}; 73{,}230 attempt records collapse to
@@ -146,9 +146,10 @@ cells, with per-device coverage in Table~\ref{tab:devices}.
 \paragraph{Timing protocol.} Backend order is randomised for each
 configuration, and each backend's timing blocks are then collected
 consecutively; the harness does not alternate backends between blocks, so we do
-not claim host or thermal effects are common-mode across a comparison. Latency
-is a CUDA-event median over the calls inside a block, then a median over
-process medians; intervals come from a 2000-draw bootstrap that resamples whole
+not claim host or thermal effects are common-mode across a comparison. For eager
+execution, each block's elapsed CUDA-event time is divided by its call count; we
+take the median across blocks within a process, then the median across
+processes. intervals come from a 2000-draw bootstrap that resamples whole
 process launches, since calls inside one launch share clocks and thermal point.
 Blocks are sized to target roughly 200~\us{}. Where a cell asks for a cold
 cache the L2 buffer is cleared once before each block, so a block of more than
@@ -333,11 +334,9 @@ timing existed for 85 of 590 forward-prefill and 287 of 1{,}974 decode source
 choices; those are counted, not costed.
 Winners differ on 27 of 64 forward-prefill and 29
 of 289 decode comparisons, yet the median transfer costs 1.002$\times$ and
-1.000$\times$, with 95th percentiles of 1.61$\times$ and 1.32$\times$;
- Across costed source-to-target transfers the median
-latency ratio was close to 1, while the upper tail showed larger penalties.
-The distribution mixes comparisons whose winner changed with those whose winner
-did not, so it describes the cost of carrying a choice, not the cost of a
+1.000$\times$, with 95th percentiles of 1.61$\times$ and 1.32$\times$. The
+distribution mixes comparisons whose winner changed with those whose winner did
+not, so it describes the cost of carrying a choice rather than the cost of a
 flip.}
 \label{fig:transfer}
 \end{figure*}
@@ -461,15 +460,15 @@ measured copy bandwidth within 0.05\% of each other.
 \paragraph{Thin repeats, and an expensive restriction.} L40 has 3 designed
 process repeats against 5 on every other device, and a realised median of 2,
 though its cell coverage is complete. Across the dataset 1 of 11{,}835 usable
-triples has a single process repeat, and for it the bootstrap has nothing to
-resample, so its CI width of 0 is an artefact. Requiring a separated winner on both sides is a
+triples has a single process repeat; its confidence interval is undefined and
+it cannot establish separation. Requiring a separated winner on both sides is a
 heavy restriction: it leaves 64 of the 720 forward-prefill and 289 of the 1916
 decode comparisons among Ampere, Ada and Hopper devices, excluding 656 and 1627
 respectively. That is the right restriction for a ranking claim, and it leaves
 the headline comparisons resting on tens to low hundreds of paired
 configurations.
 
-\paragraph{Unprobed dispatch cells.} 33.5\% of passing rows captured no kernel
+\paragraph{Unprobed dispatch cells.} 33.5\% of \code{OK} attempts captured no kernel
 trace and 26 of 651 dispatch classes have no probed row at all, so the 0.449\%
 mismatch rate is a rate among probed rows. On the unprobed rows the answer is
 unknown, not zero.

@@ -409,7 +409,8 @@ def winner_flips(cells: pd.DataFrame) -> dict:
             "top1_stable": float((common == 1).mean())}
 
 
-def paired_ratio_ci(a, b, n=2000, seed=0, ids_a=None, ids_b=None):
+def paired_ratio_ci(a, b, n=2000, seed=0, ids_a=None, ids_b=None,
+                    strict_pairing=True):
     """Cluster bootstrap over process launches, on the reported estimator.
 
     Two things this has to get right, and previously did not.
@@ -443,6 +444,17 @@ def paired_ratio_ci(a, b, n=2000, seed=0, ids_a=None, ids_b=None):
         ia = {v: i for i, v in enumerate(ids_a)}
         ib = {v: i for i, v in enumerate(ids_b)}
         keys = sorted(set(ia) & set(ib))
+        # The paper states that compared backends share a launch set throughout
+        # this dataset, and they do, in all 2,082 cells. Enforce it rather than
+        # assume it: if a future sweep leaves one backend unsupported in some
+        # launches, the ranking would use every repeat while the interval used
+        # only the shared ones, which is the defect this function was fixed for.
+        if strict_pairing and (len(keys) != len(ia) or len(keys) != len(ib)):
+            raise ValueError(
+                "launch sets differ: %d shared of %d and %d. Ranking and "
+                "paired comparison would use different repeat populations; "
+                "pass strict_pairing=False to fall back to the shared subset."
+                % (len(keys), len(ia), len(ib)))
         a = a[[ia[k] for k in keys]]
         b = b[[ib[k] for k in keys]]
 
@@ -477,9 +489,11 @@ def separated(ratio, lo, margin=None):
     return bool(lo > 1.0 and ratio >= m)
 
 
-def _boot_ratio(a, b, n=2000, seed=0, ids_a=None, ids_b=None):
+def _boot_ratio(a, b, n=2000, seed=0, ids_a=None, ids_b=None,
+                strict_pairing=True):
     """Back-compatible two-tuple wrapper."""
-    _, lo, hi, _ = paired_ratio_ci(a, b, n=n, seed=seed, ids_a=ids_a, ids_b=ids_b)
+    _, lo, hi, _ = paired_ratio_ci(a, b, n=n, seed=seed, ids_a=ids_a,
+                                  ids_b=ids_b, strict_pairing=strict_pairing)
     return lo, hi
 
 
