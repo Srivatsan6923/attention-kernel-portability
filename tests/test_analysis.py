@@ -214,3 +214,22 @@ def test_a_failure_outranks_a_sibling_pass_on_the_same_device():
         "correctness_pass": [True, False],
     })
     assert set(analysis.gate_status(d)) == {"fail"}
+
+
+def test_winner_grid_ranks_medians_not_the_fastest_launch():
+    """idxmin over raw rows picks the fastest single process launch, which is a
+    different quantity from the median every other number uses. A backend at
+    [1, 100, 100] us beats one at [10, 10, 10] on the minimum and loses on the
+    median."""
+    from akp import webdata
+    df = pd.DataFrame({
+        "gpu_name": ["G"] * 6,
+        "seq_len": [512] * 6,
+        "batch": [1] * 6,
+        "implementation": ["A", "A", "A", "B", "B", "B"],
+        "median_us": [1.0, 100.0, 100.0, 10.0, 10.0, 10.0],
+    })
+    got = webdata.winner_grid(df)["G"]
+    assert len(got) == 1
+    assert got[0]["impl"] == "B", "must rank on the repeat median, not the minimum"
+    assert got[0]["us"] == 10.0

@@ -67,8 +67,17 @@ def series(df, slice_, value="median_us"):
 
 
 def winner_grid(df, axis_y="batch"):
-    """Fastest implementation over (seq_len, batch) per GPU."""
-    w = df.loc[df.groupby(["gpu_name", "seq_len", axis_y]).median_us.idxmin()]
+    """Fastest implementation over (seq_len, batch) per GPU.
+
+    Aggregate repeats per (configuration, backend) first, then pick. Taking
+    idxmin over the raw rows selects the fastest single process launch, which
+    is a different quantity: a backend measured at [1, 100, 100] us beats one
+    at [10, 10, 10] on the minimum and loses on the median that every other
+    number here uses.
+    """
+    med = (df.groupby(["gpu_name", "seq_len", axis_y, "implementation"])
+             .median_us.median().reset_index())
+    w = med.loc[med.groupby(["gpu_name", "seq_len", axis_y]).median_us.idxmin()]
     out = {}
     for g, s in w.groupby("gpu_name"):
         out[short(g)] = [{"N": int(r.seq_len), "y": int(getattr(r, axis_y)),
@@ -89,6 +98,10 @@ def main(argv=None):
     sel = json.load(open(os.path.join(P, "selector.json"), encoding="utf8"))
     audit = pd.read_parquet(os.path.join(P, "dispatch_audit.parquet"))
     ok = rows[rows.status == "OK"]
+    # Correctness-qualified rows: status alone is not eligibility, and the
+    # performance figures were reading `ok`.
+    elig = usable(rows).copy()
+    elig["regime"] = elig.cell.str.split("|").str[0]
     cells_all = per_cell_median(usable(rows))
     cells_all["regime"] = cells_all.cell.str.split("|").str[0]
     cells_all["mode"] = cells_all.cell.str.split("|").str[7]
@@ -224,17 +237,23 @@ def main(argv=None):
     } for i, s in gate.groupby("implementation")]
 
     # ---- prefill ---------------------------------------------------------
-    pre = ok[ok.regime == "prefill"]
-    sl = best_slice(pre, ["batch", "head_dim", "dtype", "mode"])
-    out["prefill_slice"] = {k: (int(v) if isinstance(v, (np.integer, int)) else v)
-                            for k, v in sl.items()}
+    # Correctness-qualified rows, forward only, warm cache, causal: the
+    # inference population. Every axis except sequence length is pinned, so a
+    # curve varies only the intended one.
+    pre = elig[(elig.regime == "prefill") & (elig["mode"] == "fwd")
+               & (elig.cache == "warm") & (elig.causal == True)]  # noqa: E712
+    sl = best_slice(pre, ["batch", "head_dim", "dtype"])
+    sl_full = dict(sl, mode="fwd", launch="eager", cache="warm", causal=True)
+    out["prefill_slice"] = {k: (int(v) if isinstance(v, (np.integer, int, bool))
+                                and not isinstance(v, bool) else v)
+                            for k, v in sl_full.items()}
     out["prefill_latency"] = series(pre, sl)
     out["prefill_tflops"] = series(pre, sl, "tflops")
     out["prefill_memory"] = series(pre, sl, "peak_allocated_mb")
 
     base = "P2c-sdpa-flash"
-    sp = pre[(pre.head_dim == sl["head_dim"]) & (pre.dtype == sl["dtype"])
-             & (pre["mode"] == sl["mode"])]
+    # Batch is the free axis here, so everything else stays pinned.
+    sp = pre[(pre.head_dim == sl["head_dim"]) & (pre.dtype == sl["dtype"])]
     piv = sp.groupby(["gpu_name", "batch", "seq_len", "implementation"]).median_us.median()
     out["prefill_speedup"] = []
     for (g, b, n), s in piv.groupby(level=[0, 1, 2]):
@@ -249,10 +268,12 @@ def main(argv=None):
                  "speedup": r3(s[base] / v), "us": r3(v), "base_us": r3(s[base])})
 
     # ---- decode ----------------------------------------------------------
-    dec = ok[(ok.regime == "decode") & (ok.launch == "eager")]
+    dec = elig[(elig.regime == "decode") & (elig.launch == "eager")
+               & (elig.cache == "warm")]
     ds = best_slice(dec, ["hkv", "head_dim", "dtype"])
-    out["decode_slice"] = {k: (int(v) if isinstance(v, (np.integer, int)) else v)
-                           for k, v in ds.items()}
+    out["decode_slice"] = dict(
+        {k: (int(v) if isinstance(v, (np.integer, int)) else v)
+         for k, v in ds.items()}, launch="eager", cache="warm")
     for b in (1, 32):
         d = dec[dec.batch == b]
         out["decode_latency_b%d" % b] = series(d, ds)
@@ -261,16 +282,26 @@ def main(argv=None):
         dec[(dec.hkv == ds["hkv"]) & (dec.head_dim == ds["head_dim"])
             & (dec.dtype == ds["dtype"])])
 
-    # MHA vs GQA at the same shape: Hkv 32 against Hkv 8.
+    # MHA vs GQA at the same shape: Hkv 32 against Hkv 8. Batch is part of the
+    # comparison slice, not something to average over: grouping without it
+    # pooled B=1 through B=64 into a single ratio.
+    mg_b = int(sorted(dec.batch.unique())[0])
     mg = dec[(dec.head_dim == ds["head_dim"]) & (dec.dtype == ds["dtype"])
-             & dec.hkv.isin([8, 32])]
+             & (dec.batch == mg_b) & dec.hkv.isin([8, 32])]
+    out["mha_vs_gqa_slice"] = {"batch": mg_b, "head_dim": int(ds["head_dim"]),
+                               "dtype": ds["dtype"], "launch": "eager",
+                               "cache": "warm"}
     out["mha_vs_gqa"] = [{
-        "gpu": short(g), "hkv": int(h), "N": int(n), "impl": i,
+        "gpu": short(g), "hkv": int(h), "batch": mg_b, "N": int(n), "impl": i,
         "us": r3(s.median_us.median()), "kv_mb": r3(s.kv_bytes.median() / 1e6)}
         for (g, h, n, i), s in mg.groupby(["gpu_name", "hkv", "seq_len", "implementation"])]
 
     # ---- roofline (analytic traffic; no profiler data exists) ------------
-    rf = ok[ok.arith_intensity.notna() & ok.tflops.notna()] if "arith_intensity" in ok else ok.iloc[:0]
+    # Forward only: pooling the backward pass into an arithmetic-intensity
+    # median mixes two different amounts of work per byte.
+    rf = elig[(elig["mode"] == "fwd") & elig.arith_intensity.notna()
+              & elig.tflops.notna()] if "arith_intensity" in elig else elig.iloc[:0]
+    out["roofline_population"] = "forward only, correctness-qualified rows"
     if len(rf):
         s = rf.groupby(["gpu_name", "regime", "implementation"]).agg(
             ai=("arith_intensity", "median"), tf=("tflops", "median"))
