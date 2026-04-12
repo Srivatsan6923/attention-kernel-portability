@@ -240,10 +240,16 @@ def main(argv=None):
     # Correctness-qualified rows, forward only, warm cache, causal: the
     # inference population. Every axis except sequence length is pinned, so a
     # curve varies only the intended one.
+    # Head counts are part of the slice, not something series() may average
+    # over: the sweep contains Hkv=8 prefill cells alongside Hkv=32, and both
+    # were entering the same curve. launch is enforced, not just recorded.
     pre = elig[(elig.regime == "prefill") & (elig["mode"] == "fwd")
-               & (elig.cache == "warm") & (elig.causal == True)]  # noqa: E712
+               & (elig.launch == "eager") & (elig.cache == "warm")
+               & (elig.causal == True)                      # noqa: E712
+               & (elig.hq == 32) & (elig.hkv == 32)]
     sl = best_slice(pre, ["batch", "head_dim", "dtype"])
-    sl_full = dict(sl, mode="fwd", launch="eager", cache="warm", causal=True)
+    sl_full = dict(sl, hq=32, hkv=32, mode="fwd", launch="eager",
+                   cache="warm", causal=True)
     out["prefill_slice"] = {k: (int(v) if isinstance(v, (np.integer, int, bool))
                                 and not isinstance(v, bool) else v)
                             for k, v in sl_full.items()}

@@ -75,18 +75,18 @@ export const longPrefillN = Math.max(...prefillN);
 	items={[
 		{
 			value: n0(web.headline.cells),
-			label: 'Matched cells compared',
-			detail: `${n0(web.headline.ok_rows)} clean rows of ${n0(web.headline.rows)} measured, on ${web.headline.devices} GPUs`,
+			label: 'GPU/configuration observations',
+			detail: `${n0(web.headline.eligible_rows)} eligible rows of ${n0(web.headline.attempt_records)} attempts, on ${web.headline.devices} GPUs`,
 		},
 		{
-			value: pct(P('prefill', 'A100', 'H100').flip_sep),
-			label: 'Prefill winner changes, A100 to H100',
-			detail: `Restricted rate over ${P('prefill', 'A100', 'H100').n_sep} separated cells; ${pct(P('prefill', 'A100', 'H100').flip)} raw over ${P('prefill', 'A100', 'H100').n}`,
+			value: `27/64`,
+			label: 'Forward-prefill winner changes, Ampere/Ada/Hopper',
+			detail: `Comparisons separated on both GPUs, pooled over ten device pairs`,
 		},
 		{
 			value: `${web.headline.dispatch_mismatch_pct.toFixed(3)}%`,
 			label: 'Dispatch mismatch, probed rows only',
-			detail: `${(100 - web.headline.probed_pct).toFixed(1)}% of cells never probed, so their mismatch rate is unknown`,
+			detail: `${(100 - web.headline.probed_pct).toFixed(1)}% of rows unprobed, so their dispatch status is unknown`,
 		},
 		{
 			value: `1.000x`,
@@ -96,7 +96,7 @@ export const longPrefillN = Math.max(...prefillN);
 	]}
 />
 
-## Summary
+## Overview
 
 We benchmarked forward-prefill and single-token KV-cache attention across six
 NVIDIA GPUs spanning four architecture families and five compute capabilities.
@@ -149,7 +149,7 @@ The question this sweep was built to answer is narrow: if a serving stack picks 
 
 </ResearchTable>
 
-## Experimental scope
+### Experimental setup
 
 Six GPUs spanning four architecture families and five compute capabilities. Bandwidth is a copy benchmark measured in-process on that host, not a vendor figure.
 
@@ -188,7 +188,7 @@ Six GPUs spanning four architecture families and five compute capabilities. Band
 
 The grid has two regimes. Prefill runs batch {prefillB.join(', ')} against sequence lengths {prefillN.map((n) => n0(n)).join(', ')} at head_dim {web.prefill_slice.head_dim}, {web.prefill_slice.dtype}, {web.prefill_slice.mode} only; the figures below hold batch at {web.prefill_slice.batch} unless a control says otherwise. Decode is a single-token append against a KV cache of length {decodeN.map((n) => n0(n)).join(', ')} at batch {decodeB.join(', ')}, head_dim {web.decode_slice.head_dim}, {web.decode_slice.dtype}, with {web.decode_slice.hkv} KV heads in the main slice and {hkvHigh} KV heads used only for the grouped-query comparison. {IMPLS.length} implementation ids were measured, collapsing into seven backend families, and {n0(web.headline.rows)} timed rows were collected in total.
 
-## How a winner is decided, and what a transfer costs
+### How a winner is decided, and what a transfer costs
 
 Two definitions carry every number on this page.
 
@@ -221,88 +221,67 @@ backend actually measured on the target. Where the source's pick has no
 eligible timing on the target the ratio is undefined, and those cases are
 counted separately rather than filled in with the target's own best.
 
-## Portability
+## Main results
 
-This is the result the sweep was built for. A flip rate answers whether a choice made on one device survives a move to another, and it is interpretable only with two things attached: the number of configurations it was computed over, and whether those configurations met the separation criterion.
+A winner-change rate is interpretable only with its denominator and its separation criterion attached, so both are given with every rate below.
 
-Of {n0(web.headline.cells)} matched configurations, {pct(PF.separated)} of {PF.n} forward-prefill and {pct(DC.separated)} of {DC.n} decode have a winner separated from second place by both the bootstrap lower bound and the {thr}% practical margin. In the remainder the separation criterion was not met, which is not the same as the backends being equal. The restricted rate, computed over separated configurations only, is the number to read.
+Of {n0(web.headline.cells)} GPU/configuration observations, {pct(PF.separated)} of {PF.n} forward-prefill and {pct(DC.separated)} of {DC.n} decode have a winner separated from second place by both the bootstrap lower bound and the {thr}% practical margin. In the remainder the separation criterion was not met, which is not the same as the backends being equal. The restricted rate, computed over separated configurations only, is the number to read.
 
 <ResearchFigure
-	number={6}
-	id="fig-portability-flip"
-	title={`Winner flip rate per device pair, all cells against cells with a separated winner, ${web.pairs.length} pairs`}
+	number={1}
+	id="fig-separation"
+	title="Separated fastest backends by GPU, forward prefill and decode"
 	dataHref="/data/web.json"
+	downloadHref="/figures/figA_separation.pdf"
 	wide={true}
 >
-	<PortabilityFlip />
+	<img src="/figures/figA_separation.png" alt="Separated fastest backends by GPU" style="width:100%;height:auto" />
 	<Observation slot="observations">
 		<li>
-Forward prefill changes winner on 27 of 64 comparisons that are separated on
-			both GPUs, pooled over the ten Ampere/Ada/Hopper device pairs. Individual
-			pairs are thin once the criterion is applied: A100 against H100 retains only
-			{P('prefill', 'A100', 'H100').n_sep} of {P('prefill', 'A100', 'H100').n}
-			configurations, too few to read as a rate on its own.
+			<strong>Most configurations have no separated fastest backend.</strong> The
+			criterion is met on 128 of 447 forward-prefill and 409 of 1203 decode
+			configurations, pooled across six GPUs. No device clears half in both regimes.
 		</li>
 		<li>
-			Decode mostly transfers. A100 against L40 flips on {pct(P('decode', 'A100', 'L40').flip_sep)} of
-			{' '}{P('decode', 'A100', 'L40').n_sep} separated cells against {pct(P('decode', 'A100', 'L40').flip)} of
-			{' '}{P('decode', 'A100', 'L40').n} raw, and A100 against H100 on {pct(P('decode', 'A100', 'H100').flip_sep)} of
-			{' '}{P('decode', 'A100', 'H100').n_sep} against {pct(P('decode', 'A100', 'H100').flip)} of
-			{' '}{P('decode', 'A100', 'H100').n} raw. The raw rates alone would have said decode is as unstable as prefill; the
-			restriction is what separates the two regimes. Both of these pairs also cross the commit and driver split, so the
-			transfer is measured against a confound rather than a clean device swap.
-		</li>
-		<li>
-			Same-architecture pairs are not automatically safe. L40 against L40S in prefill, two sm89 parts, flips on
-			{' '}{pct(P('prefill', 'L40', 'L40S').flip_sep)} of only {P('prefill', 'L40', 'L40S').n_sep} separated cells
-			({pct(P('prefill', 'L40', 'L40S').flip)} of {P('prefill', 'L40', 'L40S').n} raw). That separated denominator is too
-			small to carry a conclusion, and the two parts sit on different driver builds ({dev('L40').driver} against
-			{' '}{dev('L40S').driver}). The comparison does not isolate device effects from driver and host effects.
-		</li>
-		<li>
-			Every rate here is a fraction of cells within one device pair, in one regime, at one software snapshot, over
-			{' '}{web.headline.devices} GPUs; separated denominators across the {web.pairs.length} pairs range from
-			{' '}{Math.min(...web.pairs.map((p) => p.n_sep))} to {Math.max(...web.pairs.map((p) => p.n_sep))} cells. Pairs holding a
-			handful of separated cells are shown for completeness and should not be ranked against pairs holding dozens.
+			Workload counts differ by GPU, so the bars describe the configurations each
+			device measured. Failing the criterion does not establish that the backends
+			are equally fast.
 		</li>
 	</Observation>
 </ResearchFigure>
 
-<ResearchTable long caption={`All ${web.pairs.length} device pairs. Flip (all) is over every matched cell in the pair; flip (separated) is over the cells where the winner clears both the bootstrap CI and the ${thr}% threshold. Decode pairs cross the commit and driver split described above; prefill pairs do not.`}>
+<ResearchFigure
+	number={2}
+	id="fig-transfer"
+	title="Winner changes, and the latency cost of transferring a backend choice"
+	dataHref="/data/web.json"
+	downloadHref="/figures/figB_transfer.pdf"
+	wide={true}
+>
+	<img src="/figures/figB_transfer.png" alt="Winner changes and transfer cost" style="width:100%;height:auto" />
+	<Observation slot="observations">
+		<li>
+			<strong>Winners change more often in forward prefill than in decode.</strong>
+			Over the five Ampere, Ada and Hopper GPUs, 27 of 64 separated forward-prefill
+			comparisons change winner against 29 of 289 in decode.
+		</li>
+		<li>
+			<strong>A changed winner usually costs little at the median.</strong>
+			Transferring the source GPU's choice costs a median 1.002x in prefill and
+			1.000x in decode, with 95th percentiles of 1.61x and 1.32x. 85 of 590 prefill
+			and 287 of 1974 decode source choices had no eligible target timing and are
+			counted rather than costed.
+		</li>
+	</Observation>
+</ResearchFigure>
 
-<table>
-	<thead>
-		<tr>
-			<th>Regime</th>
-			<th>Pair</th>
-			<th class="num">Cells</th>
-			<th class="num">Flip, all (%)</th>
-			<th class="num">Separated cells</th>
-			<th class="num">Flip, separated (%)</th>
-		</tr>
-	</thead>
-	<tbody>
-		{web.pairs.map((p) => (
-			<tr>
-				<td>{p.regime}</td>
-				<td>{p.a} vs {p.b}</td>
-				<td class="num">{p.n}</td>
-				<td class="num">{(100 * p.flip).toFixed(1)}</td>
-				<td class="num">{p.n_sep}</td>
-				<td class="num">{(100 * p.flip_sep).toFixed(1)}</td>
-			</tr>
-		))}
-	</tbody>
-</table>
-
-</ResearchTable>
 
 ## Prefill
 
 Prefill is compute-shaped and commit-homogeneous: every prefill row in this sweep was analysed at commit {web.devices[0].sha}, so a difference between prefill panels is a difference of device and driver, not of harness version.
 
 <ResearchFigure
-	number={1}
+	number={3}
 	id="fig-prefill-latency"
 	title={`Prefill median latency, achieved throughput and peak memory against sequence length, batch ${web.prefill_slice.batch}, head_dim ${web.prefill_slice.head_dim}, ${web.prefill_slice.dtype}`}
 	dataHref="/data/web.json"
@@ -350,7 +329,7 @@ Prefill is compute-shaped and commit-homogeneous: every prefill row in this swee
 Normalising against one baseline makes the shape of the win clearer, and the absolute latency is carried in every cell so that a large ratio on a small absolute number cannot be mistaken for a large saving.
 
 <ResearchFigure
-	number={2}
+	number={4}
 	id="fig-prefill-speedup"
 	title="Prefill speedup over forced SDPA-flash by batch and sequence length, with absolute latency in every cell"
 	dataHref="/data/web.json"
@@ -383,7 +362,7 @@ Normalising against one baseline makes the shape of the win clearer, and the abs
 	</Observation>
 </ResearchFigure>
 
-## Decode and the KV cache
+## Decode
 
 Single-token decode does very little arithmetic and reads the whole cache, so the useful model is bytes rather than FLOPs. The **KV-cache footprint**, an idealised one-read byte count for a decode step, is
 
@@ -396,7 +375,7 @@ with $B$ the batch, $H_{kv}$ the number of KV heads, $N$ the KV length, $D$ the 
 Every decode comparison across devices in this section is confounded. The A10 and A100 decode rows were collected under a different commit and driver than the H100 and L40 rows, so a panel-to-panel change mixes hardware with software provenance and cannot be attributed to architecture alone. Prefill has no such split.
 
 <ResearchFigure
-	number={3}
+	number={5}
 	id="fig-decode-latency"
 	title={`Single-token decode step time and effective KV bandwidth against KV length, hkv=${web.decode_slice.hkv}, head_dim=${web.decode_slice.head_dim}, ${web.decode_slice.dtype}`}
 	dataHref="/data/web.json"
@@ -439,10 +418,29 @@ Every decode comparison across devices in this section is confounded. The A10 an
 	</Observation>
 </ResearchFigure>
 
-<DecodeWinnerMap number={4} />
+<DecodeWinnerMap number={6} />
 
-Grouped-query attention changes the traffic term directly, and measured time follows it closely. On H100 at N={n0(longN)}, going from {mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB of cache at {hkvHigh} KV heads to {mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB at {hkvLow} KV heads, a {(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb / mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb).toFixed(1)}x reduction in bytes, takes the FlashAttention KV-cache step from {sig(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us)} us to {sig(mha('H100', hkvLow, longN, 'D3-fa-kvcache').us)} us, a {(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us / mha('H100', hkvLow, longN, 'D3-fa-kvcache').us).toFixed(1)}x reduction in time. SDPA moves {sig(mha('H100', hkvHigh, longN, 'D2-sdpa').us)} us to {sig(mha('H100', hkvLow, longN, 'D2-sdpa').us)} us over the same change, and FlashInfer {sig(mha('H100', hkvHigh, longN, 'D4-flashinfer').us)} us to {sig(mha('H100', hkvLow, longN, 'D4-flashinfer').us)} us. The reference path is the exception, at {sig(mha('H100', hkvHigh, longN, 'D0-naive-kv').us)} us against {sig(mha('H100', hkvLow, longN, 'D0-naive-kv').us)} us, because its cost is dominated by the materialised score matrix rather than by the cache read. This is one slice on one device at this software snapshot, over {web.mha_vs_gqa.length} measured points in total, and it is not a general scaling law.
+At batch 1 and a KV length of {n0(longN)} on H100, reducing the KV-head count from {hkvHigh} to {hkvLow} reduced the native KV footprint fourfold, from {mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb.toFixed(3)} MB to {mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb.toFixed(3)} MB. FlashAttention KV-cache latency decreased from {sig(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us)} to {sig(mha('H100', hkvLow, longN, 'D3-fa-kvcache').us)} us, while FlashInfer latency increased from {sig(mha('H100', hkvHigh, longN, 'D4-flashinfer').us)} to {sig(mha('H100', hkvLow, longN, 'D4-flashinfer').us)} us. A smaller KV footprint therefore did not produce a proportional or consistent latency improvement across these backends. On H100 at N={n0(longN)}, going from {mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB of cache at {hkvHigh} KV heads to {mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB at {hkvLow} KV heads, a {(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb / mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb).toFixed(1)}x reduction in bytes, takes the FlashAttention KV-cache step from {sig(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us)} us to {sig(mha('H100', hkvLow, longN, 'D3-fa-kvcache').us)} us, a {(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us / mha('H100', hkvLow, longN, 'D3-fa-kvcache').us).toFixed(1)}x reduction in time. SDPA moves {sig(mha('H100', hkvHigh, longN, 'D2-sdpa').us)} us to {sig(mha('H100', hkvLow, longN, 'D2-sdpa').us)} us over the same change, and FlashInfer {sig(mha('H100', hkvHigh, longN, 'D4-flashinfer').us)} us to {sig(mha('H100', hkvLow, longN, 'D4-flashinfer').us)} us.
 
+## Limitations and reproduction
+
+Results cover the tested workloads and library versions. GPU, host and driver
+effects are not isolated: each device was measured on the host that had it.
+Dispatch traces were captured for 66.5% of successful attempts; the remainder
+have unknown dispatch status. Bandwidth figures use analytic byte counts rather
+than measured DRAM traffic.
+
+All analysis on this page comes from commit `{web.devices[0].sha}` on the devices listed above ({web.devices.map((d) => `${d.gpu} ${d.cc}`).join(', ')}), under torch {web.software.torch}, CUDA {web.software.cuda}, Triton {web.software.triton}, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. The separate Hopper flash-attn interface package reports as {String(web.software.flash_attn_interface)}, and FlashAttention-3 rows exist on H100 only.
+
+Three commands regenerate every number on this page from the raw sweep, in order:
+
+```bash
+python -m akp.analysis    # separation, pairs, winners, dispatch and correctness tables
+python -m akp.figures     # static figure PDFs into site/public/figures
+python -m akp.webdata     # site/public/data/web.json, the only source this page reads
+```
+
+Values in the tables and figures are read from <a href="/data/web.json">web.json</a> at build or run time. The summary paragraph above is currently written out rather than generated, so regenerating the data does not rewrite it.
 ## Supplementary material
 
 The sections below are the diagnostics behind the results above: dispatch
@@ -453,13 +451,13 @@ result, and nothing in the main narrative depends on reading them first.
 <details>
 <summary>Show diagnostics</summary>
 
-## Validity before performance
+### Validity before performance
 
 A latency table is worth nothing if the row did not run the kernel it claims. Three checks come before any timing comparison: what ran, what dispatched, and whether the output was right.
 
-Outcomes are four distinct things and are kept apart. `OK` is a clean timed row. `UNSUPPORTED` means the implementation declined the configuration by design, for example FlashAttention-3 on pre-Hopper parts. `OOM_PREDICTED` means the allocation was computed in advance to exceed memory and the cell was skipped without running. `OOM` means an allocation was attempted and actually failed. Collapsing these into one failure surface would read as instability where most of it is a documented refusal.
+Outcomes are five distinct things and are kept apart. `OK` is a clean timed row. `UNSUPPORTED` means the implementation declined the configuration by design, for example FlashAttention-3 on pre-Hopper parts. `OOM_PREDICTED` means the allocation was computed in advance to exceed memory and the cell was skipped without running. `OOM` means an allocation was attempted and actually failed. `ERROR` means the call raised at run time: all {n0(web.status_counts.ERROR)} are FlashInfer on the RTX 5090. Collapsing these into one failure surface would read as instability where most of it is a documented refusal.
 
-<ResearchTable long caption={`Row outcomes by implementation, summed over all ${web.headline.devices} devices and both regimes. ${n0(web.status_counts.OK)} rows ran clean, ${n0(web.status_counts.UNSUPPORTED)} were declined by the implementation, ${n0(web.status_counts.OOM_PREDICTED)} were skipped by the memory predictor and ${n0(web.status_counts.OOM)} allocations failed at run time.`}>
+<ResearchTable long caption={`Row outcomes by implementation, summed over all ${web.headline.devices} devices and both regimes. ${n0(web.status_counts.OK)} rows ran clean, ${n0(web.status_counts.UNSUPPORTED)} were declined by the implementation, ${n0(web.status_counts.OOM_PREDICTED)} were skipped by the memory predictor, ${n0(web.status_counts.OOM)} allocations failed at run time and ${n0(web.status_counts.ERROR)} raised a runtime error.`}>
 
 <table>
 	<thead>
@@ -578,7 +576,7 @@ Correctness was checked against the reference on a subsample of configurations. 
 
 </ResearchTable>
 
-## Attribution, and what cannot be attributed
+### Attribution, and what cannot be attributed
 
 Before the roofline, the limits of what this data can explain.
 
@@ -618,7 +616,7 @@ There are no hardware counters for any run on any platform in this study. That r
 	</Observation>
 </ResearchFigure>
 
-## Implementation provenance
+### Implementation provenance
 
 Splitting authored code from integrated code matters here. `P3-triton` is a vendored Triton tutorial kernel with a local BF16 modification, not a kernel written for this project, and no custom CUDA kernel authorship is claimed.
 
@@ -629,18 +627,77 @@ Integrated and measured, not authored: `P4-fa2`, `P4h-fa3`, `D3-fa-kvcache`, `D6
 One layout caveat applies to the FlashInfer comparison throughout. The page size in every decode cell equals the KV length by construction, so the FlashInfer and FlashAttention decode entries differ by library, not by KV layout. No page-size sweep was run, and no number here can be read as a cost of one layout against another.
 
 
+
+
 </details>
 
-## Reproducibility
+<ResearchFigure
+	number={7}
+	id="fig-portability-flip"
+	title={`Winner flip rate per device pair, all cells against cells with a separated winner, ${web.pairs.length} pairs`}
+	dataHref="/data/web.json"
+	wide={true}
+>
+	<PortabilityFlip />
+	<Observation slot="observations">
+		<li>
+Forward prefill changes winner on 27 of 64 comparisons that are separated on
+			both GPUs, pooled over the ten Ampere/Ada/Hopper device pairs. Individual
+			pairs are thin once the criterion is applied: A100 against H100 retains only
+			{P('prefill', 'A100', 'H100').n_sep} of {P('prefill', 'A100', 'H100').n}
+			configurations, too few to read as a rate on its own.
+		</li>
+		<li>
+			Decode mostly transfers. A100 against L40 flips on {pct(P('decode', 'A100', 'L40').flip_sep)} of
+			{' '}{P('decode', 'A100', 'L40').n_sep} separated cells against {pct(P('decode', 'A100', 'L40').flip)} of
+			{' '}{P('decode', 'A100', 'L40').n} raw, and A100 against H100 on {pct(P('decode', 'A100', 'H100').flip_sep)} of
+			{' '}{P('decode', 'A100', 'H100').n_sep} against {pct(P('decode', 'A100', 'H100').flip)} of
+			{' '}{P('decode', 'A100', 'H100').n} raw. The raw rates alone would have said decode is as unstable as prefill; the
+			restriction is what separates the two regimes. Both of these pairs also cross the commit and driver split, so the
+			transfer is measured against a confound rather than a clean device swap.
+		</li>
+		<li>
+			Same-architecture pairs are not automatically safe. L40 against L40S in prefill, two sm89 parts, flips on
+			{' '}{pct(P('prefill', 'L40', 'L40S').flip_sep)} of only {P('prefill', 'L40', 'L40S').n_sep} separated cells
+			({pct(P('prefill', 'L40', 'L40S').flip)} of {P('prefill', 'L40', 'L40S').n} raw). That separated denominator is too
+			small to carry a conclusion, and the two parts sit on different driver builds ({dev('L40').driver} against
+			{' '}{dev('L40S').driver}). The comparison does not isolate device effects from driver and host effects.
+		</li>
+		<li>
+			Every rate here is a fraction of cells within one device pair, in one regime, at one software snapshot, over
+			{' '}{web.headline.devices} GPUs; separated denominators across the {web.pairs.length} pairs range from
+			{' '}{Math.min(...web.pairs.map((p) => p.n_sep))} to {Math.max(...web.pairs.map((p) => p.n_sep))} cells. Pairs holding a
+			handful of separated cells are shown for completeness and should not be ranked against pairs holding dozens.
+		</li>
+	</Observation>
+</ResearchFigure>
 
-All analysis on this page comes from commit `{web.devices[0].sha}` on the devices listed above ({web.devices.map((d) => `${d.gpu} ${d.cc}`).join(', ')}), under torch {web.software.torch}, CUDA {web.software.cuda}, Triton {web.software.triton}, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. The separate Hopper flash-attn interface package reports as {String(web.software.flash_attn_interface)}, and FlashAttention-3 rows exist on H100 only.
+<ResearchTable long caption={`All ${web.pairs.length} device pairs. Flip (all) is over every matched cell in the pair; flip (separated) is over the cells where the winner clears both the bootstrap CI and the ${thr}% threshold. Decode pairs cross the commit and driver split described above; prefill pairs do not.`}>
 
-Three commands regenerate every number on this page from the raw sweep, in order:
+<table>
+	<thead>
+		<tr>
+			<th>Regime</th>
+			<th>Pair</th>
+			<th class="num">Cells</th>
+			<th class="num">Flip, all (%)</th>
+			<th class="num">Separated cells</th>
+			<th class="num">Flip, separated (%)</th>
+		</tr>
+	</thead>
+	<tbody>
+		{web.pairs.map((p) => (
+			<tr>
+				<td>{p.regime}</td>
+				<td>{p.a} vs {p.b}</td>
+				<td class="num">{p.n}</td>
+				<td class="num">{(100 * p.flip).toFixed(1)}</td>
+				<td class="num">{p.n_sep}</td>
+				<td class="num">{(100 * p.flip_sep).toFixed(1)}</td>
+			</tr>
+		))}
+	</tbody>
+</table>
 
-```bash
-python -m akp.analysis    # separation, pairs, winners, dispatch and correctness tables
-python -m akp.figures     # static figure PDFs into site/public/figures
-python -m akp.webdata     # site/public/data/web.json, the only source this page reads
-```
+</ResearchTable>
 
-Values in the tables and figures are read from <a href="/data/web.json">web.json</a> at build or run time. The summary paragraph above is currently written out rather than generated, so regenerating the data does not rewrite it.
