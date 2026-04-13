@@ -1,236 +1,58 @@
 # Attention Kernel Portability
 
-Do conclusions about attention performance transfer across GPU architectures and
-across prefill vs. single-token KV-cache decode?
+A benchmark of attention backends across six NVIDIA GPUs:
+A10, A100, L40, L40S, H100 and RTX 5090.
 
-Attention kernels are usually benchmarked on one GPU, in one regime, and the
-ranking is reported as if it were a property of the kernel. This repo measures
-how far such a ranking actually travels, across Ampere, Ada, Hopper and
-Blackwell and between prefill and decode, with every measurement gated on
-numerical correctness and on a check that the kernel which ran is the kernel
-that was requested.
+We measure whether a backend selected on one GPU remains a good
+choice on another, separately for forward prefill and single-token
+KV-cache decode.
+
+[Paper](paper/main.pdf) · [Result ledger](paper/ledger.md)
 
 ## Results
 
-Six GPUs across four architecture families (sm80, sm86, sm89, sm90, sm120),
-**73,230 attempt records** of which 54,098 ran, passed the correctness gate for
-their device and class, and entered a ranking; they collapse to 11,835 usable
-(GPU, configuration, backend) medians. Fixed library versions across the
-recorded GPU and host environments: torch 2.9.0+cu128, CUDA 12.8, triton 3.5.0,
-flash-attn 2.8.3, flashinfer 0.6.18. Host and driver differences are not
-isolated from GPU differences: each device was measured on the host that had
-it.
+A backend is considered separated from the runner-up when the
+runner-up is at least 10% slower and the lower bound of the 95%
+bootstrap interval on that latency ratio exceeds 1.
 
-- **Most configurations have no separated fastest backend.** The fastest path
-  clears both a 10% margin and a bootstrap interval excluding 1 on 29% of 447
-  forward-prefill and 34% of 1,203 decode configurations. The rest are not
-  proven equal; they simply did not meet the criterion.
-- **Among comparisons meeting the separation criterion on both GPUs, winner
-  changes were more frequent in forward prefill (27 of 64) than in decode
-  (29 of 289).**
-- **RTX 5090 decode comparisons under the tested build** flip on 63 of 85
-  separated comparisons. In the recorded runs the FlashInfer path produced no
-  usable timing there: 950 of 960 attempts ended in a runtime error and the
-  remaining 10 ran out of memory, so how it would have performed on that device
-  could not be measured.
-- **A changed winner is usually cheap.** Carrying the source device's choice to
-  the target costs a median 1.000x in decode and 1.002x in forward prefill,
-  with p95 of 1.33x and 1.61x; 14% of source choices do not exist on the target.
-- **The wheels show the same asymmetry statically.** flash-attn 2.8.3 ships no
-  sm_86 or sm_89 cubins and no PTX, so on those parts it runs sm_80 code
-  (`scripts/provenance.sh`).
+| Measurement | Forward prefill | Decode |
+|---|---:|---:|
+| Configurations with a separated winner | 128/447 (28.6%) | 409/1,203 (34.0%) |
+| Winner changes among eligible Ampere/Ada/Hopper comparisons | 27/64 (42.2%) | 29/289 (10.0%) |
+| Median source-to-target latency ratio | 1.002× | 1.000× |
+| 95th-percentile transfer ratio | 1.610× | 1.325× |
 
-`paper/` holds the preprint and `paper/numbers.md` traces every number in it
-back to the code that produced it. `site/` is the long-form write-up.
+Winner-change comparisons require separation on both GPUs.
+Transfer ratios use all six GPUs and require separation on the
+source. No eligible target timing was available for 85/590 prefill
+choices and 287/1,974 decode choices.
 
-## What the numbers mean
+## Run a smoke test
 
-Four definitions carry every result. The paper's Method section states them
-formally; these are the plain-English versions.
+Use the pinned environment in `env/Dockerfile`.
 
-- **Reported latency.** The median of per-process-launch median attention-call
-  durations, in microseconds. Steady-state attention-call latency with prepared
-  inputs, not request latency, model tokens/s or end-to-end TTFT.
-- **Separated winner.** The fastest backend counts as the winner only if the
-  runner-up is at least 10% slower *and* the lower end of a 95% bootstrap
-  interval on that ratio still exceeds 1. Both conditions. Failing the rule does
-  not mean the backends are equal; it means no fastest backend was established.
-- **Winner-change rate.** Over matched comparisons where a configuration was
-  measured on both GPUs and both winners are separated: the fraction whose
-  winning backend differs. The common-backend variant intersects the eligible
-  backends **per matched configuration**, then re-derives winners and separation
-  inside that set.
-- **Transfer cost.** The target GPU's latency for the source GPU's chosen
-  backend, divided by the target's own fastest. 1.20 means the carried choice
-  takes 20% longer than the best measured on the target. Where the source's
-  choice has no eligible target timing the ratio is undefined and is reported as
-  a coverage count, never replaced by the target's best.
+```bash
+pip install -e ".[dev]"
+pytest tests/ -q
+python -m akp.preflight
+python -m akp.run --grid smoke
+python -m akp.analysis results/raw
+```
 
-See `paper/main.tex`, Section 3 (Definitions), for the equations.
+A smoke test checks the pipeline; it does not reproduce the full
+six-GPU study. Full-run scripts are in `scripts/`.
 
-## Why the dispatch check matters
+The measurement records behind the published results are not yet
+released, so the six-GPU study cannot currently be reproduced from
+this repository alone. A dataset release is pending.
 
-A benchmark can call `flash_attn_func` and measure something else entirely: a
-fallback path, a different SDPA backend, or a compiler substitution. Every cell
-here records the CUDA kernels the call actually launched, and the requested vs.
-observed backend is reconciled in analysis rather than assumed.
+## Scope and implementation
 
-Two things this caught, first on the development GPU and then across the full
-six-device sweep:
+Results measure attention-call latency with prepared inputs.
+Host and driver differences are not isolated from GPU differences.
+Dispatch traces were captured for 66.5% of successful attempts.
 
-- **TorchInductor's `fuse_attention` counter never fired.**
-  `counters["inductor"]["fuse_attention"] == 0` for all three compiled variants,
-  including the `torch.where` spelling that `_sfdp_pattern_18/19` are written
-  against. Across the finished dataset, 3,645 of 17,537 Inductor rows captured
-  the counter and it is 0 on every one of them, on all six devices. This is a
-  statement about that counter, not a general claim that Inductor cannot
-  rewrite attention: 45 probed Inductor rows, all on H100, do carry a flash
-  kernel in their trace. Inductor fuses the softmax epilogue into its own Triton kernel, 3
-  launched kernels against the naive path's 8, but keeps both GEMMs and still
-  materializes the N×N score matrix.
-- **The upstream Triton tutorial-06 kernel is fp16-only.** It hardcodes
-  `tl.float16` in the forward and in three backward casts, so it fails to
-  compile for bf16 at any shape. `akp/vendor/triton_tutorial06.py` carries a
-  minimal patch deriving the dtype from the inputs; the header documents exactly
-  what changed.
-
-## Layout
-
-    akp/impls.py     implementations behind one build(cfg, device) -> Built interface
-    akp/bench.py     CUDA-event timing, device info, clock/throttle telemetry
-    akp/check.py     fp32 reference, correctness gate, dispatch probe
-    akp/run.py       grids, resume, interleaved measurement, status taxonomy
-    akp/analysis.py  metrics, ranking inversions, dispatch audit, backend selector
-    akp/preflight.py per-GPU gate a sweep refuses to start without
-    akp/figures.py   the paper figures and the winner map
-    akp/webdata.py   aggregates results/processed into the article's web.json
-    tests/           semantic checks for the failures that stay silent
-    dashboard/app.py results dashboard
-    paper/           the preprint, plus numbers.md tracing every quoted figure
-    site/            the long-form article (Astro + MDX)
-    env/Dockerfile   pinned image (torch 2.9, flash-attn, flashinfer)
-    scripts/         NRP job specs, the single-host sweep loop, profiling
-
-## Running it
-
-    pip install -e ".[dev]"          # add [kernels] for flash-attn + flashinfer
-    pytest tests/ -q
-    python -m akp.preflight          # must print Overall: PASS
-    python -m akp.run --grid smoke   # ~90 s, writes results/raw/<gpu>/*.jsonl
-    python -m akp.analysis results/raw
-
-`akp.preflight` is the gate on collecting anything from a GPU. It checks the
-device is the one requested and not a MIG slice, that nothing else is resident
-on it, that it is not already throttled, that every implementation imports,
-runs, dispatches to a real kernel and passes the numerical gate in both
-directions, that the OOM predictor bounds the real allocation, and that
-doubling the work doubles the measured time. It exits non-zero on failure, so
-a sweep can be gated on it, and it drives the same code the sweep drives
-rather than reimplementing the checks.
-
-It has caught, on real hardware: an OOM predictor short by 35%, a throttle
-filter discarding a fifth of the rows, and an image whose baked git sha named
-a commit that could not have produced the code inside it.
-
-Grids: `smoke`, `prefill_full`, `prefill_gqa`, `prefill_noncausal`,
-`prefill_cold`, `decode_full`, `decode_cudagraph`, `decode_cold`, `profile`.
-
-Process-level repeats are a shell loop, since each needs a fresh CUDA context:
-
-    for i in 0 1 2 3 4; do python -m akp.run --grid prefill_full --repeat $i; done
-
-Runs are resumable. Rows are keyed by a config hash and appended as they are
-produced, so a killed sweep restarts where it stopped.
-
-`--prewarm` builds every cell once without timing or writing anything. Inductor
-autotune and FlashInfer JIT are paid per shape and dominate wall time, so doing
-them once up front keeps them out of the measured repeats.
-
-## Running on a cluster
-
-    docker build -f env/Dockerfile \
-      --build-arg GIT_SHA=$(git rev-parse HEAD) -t ghcr.io/<user>/akp:<tag> .
-    docker push ghcr.io/<user>/akp:<tag>
-
-The sha is not optional: every row carries it as its provenance, and the build
-refuses anything that is not a full 40-character sha. An image that names one
-commit while containing another produces a dataset nobody can reproduce.
-
-On NRP/Nautilus, once per namespace:
-
-    kubectl apply -f scripts/nrp_storage.yaml
-
-Then per grid:
-
-    IMAGE=ghcr.io/<user>/akp:v1 scripts/nrp_launch.sh prefill_full 2 2
-
-That is a prewarm Job followed by an Indexed Job of five process repeats across
-NSHARDS config shards, one A100 per pod. Jobs rather than interactive pods,
-since interactive pods are destroyed after six hours and a full grid takes
-longer than that.
-
-Every pod runs `akp.preflight` before `akp.run` and exits without writing rows
-if it fails. The gate is per pod, not per campaign, because pods land on
-different nodes. Reports are kept under `/data/preflight/`.
-
-On a single host without Kubernetes (a rented H100, an Ada box):
-
-    scripts/run_gpu.sh prefill_full decode_full
-
-## Dashboard
-
-    pip install -e ".[dash]"
-    python -m akp.analysis results/raw   # writes results/processed/
-    streamlit run dashboard/app.py
-
-Seven pages: hardware and environment, prefill, decode, dispatch and fallbacks,
-ranking inversions, attribution, and backend selection. It reads
-`results/processed/` and recomputes nothing, so a number here and the same
-number in the report cannot disagree.
-
-## Method notes
-
-**Causal alignment.** flash-attn ≥ 2.1 aligns its causal mask bottom-right;
-PyTorch SDPA's `is_causal` is top-left. They agree only when `q_len == kv_len`.
-At `q_len=1, kv_len=N` flash-attn attends to all N keys and SDPA attends to key
-0, which is fast and silently wrong. Decode passes each API its own "attend to
-everything" spelling; `tests/test_semantics.py` asserts the two conventions
-disagree, so the test fails loudly if either library changes.
-
-**Cache condition is an axis.** Flushing L2 before every call measures
-cold-cache behaviour, but back-to-back decode in a server is warm. Both are
-measured (`cache=warm` default, `cache=cold` grids) and reported separately.
-
-**Timing.** K iterations per CUDA-event pair, K sized so a block exceeds 200 µs.
-Measured event-pair overhead on the dev box is 5.1 µs, which would inflate a
-10 µs decode kernel by roughly half if timed per iteration.
-
-**Correctness gate.** `err(impl) <= max(2 · err(naive in same dtype), τ[dtype])`,
-applied to the output and to dQ/dK/dV separately, with non-finite values failing
-outright. Both halves of the rule are recorded so it is visible which one
-decided a cell. Cells that fail are excluded from timing results and kept in the
-failure table.
-
-**Ordering.** Implementation order is shuffled per configuration, so clock and
-thermal drift is common-mode across the implementations being compared. Rows
-measured while the GPU reported a throttle reason are dropped. Confidence
-intervals come from a bootstrap clustered on process repeats, since repeats
-inside one process share clock state.
-
-**Profiling.** No Nsight counters were collected: every rented host blocked
-Nsight Compute and Nsight Systems. `scripts/profile.sh` exists but produced no
-traces, so nothing here supports an occupancy, cache-hit-rate, measured-roofline
-or bandwidth-saturation claim. Effective KV bandwidth is computed from an
-assumed byte count and the measured latency; it is not a measurement of DRAM
-traffic.
-
-## Status
-
-Data collection is complete. L40 carries 3 designed process repeats against 5
-elsewhere and a realised median of 2,
-with full cell coverage; subsampling a complete device to 3 repeats moves its
-separated-winner count by 3 to 5 cells in 192, so the criterion is dominated by
-the 1.10 margin rather than by sampling depth.
-
-The raw shards (456 MB) and `results/processed/` are not in git. A dataset
-release is the remaining step before the preprint is submitted.
+The repository contains the benchmark harness, reference paths,
+correctness checks and analysis. The Triton implementation is
+adapted from the fused-attention tutorial with a BF16 modification;
+FlashAttention and FlashInfer use their library implementations.

@@ -43,29 +43,20 @@
 \maketitle
 
 \begin{abstract}
-Published attention benchmarks report a winner measured on one GPU. Does that
-winner survive a change of device? We time 10 prefill and 6 decode
-implementations over 403 configurations on six NVIDIA GPUs spanning sm80, sm86,
-sm89, sm90 and sm120, at fixed library versions across the recorded GPU and
-host environments: torch 2.9.0+cu128, CUDA
-12.8, triton 3.5.0, flash-attn 2.8.3, flashinfer 0.6.18. Most configurations do not have a separated fastest backend: the fastest is
-separated from the runner-up, by both a 10\% margin and a bootstrap interval
-excluding 1, on 29\% of 447 forward-prefill and 34\% of 1203 decode
-configurations. Among those that are separated, the fastest backend changes
-between devices on 27 of 64 forward-prefill comparisons and 29 of 289 decode
-comparisons within Ampere, Ada and Hopper. Changing winner is not the same as
-paying for it: transferring the source device's choice costs a median
-1.002$\times$ in prefill and 1.000$\times$ in decode, with 95th percentiles of
-1.61$\times$ and 1.32$\times$. No eligible target timing was available for 85 of
-590 prefill choices and 287 of 1{,}974 decode choices. Winner changes are most frequent
-against the RTX 5090, at 63 of 85 decode comparisons. In the recorded runs the
-FlashInfer path produced no usable timing on that device: 950 of 960 attempts
-raised a runtime error and the remaining 10 ran out of memory, so its
-performance there could not be measured. A \code{cuobjdump} audit records which
-architectures the installed wheels carry native code for; it documents artifact
-coverage and, without a rebuild for the missing targets, does not establish a
-performance cause. These results are scoped to the tested workloads, GPUs and
-library versions.
+We study whether an attention backend selected on one GPU remains a good choice
+on another. We benchmark forward prefill and single-token KV-cache decode across
+six NVIDIA GPUs using fixed library versions. A backend meets our separation
+criterion when the runner-up is at least 10\% slower and the lower bound of a
+95\% bootstrap interval on the latency ratio exceeds 1. This criterion is met in
+128/447 forward-prefill and 409/1{,}203 decode configurations. Among separated
+comparisons across Ampere, Ada and Hopper GPUs, the selected backend changes in
+27/64 prefill comparisons and 29/289 decode comparisons. Across costed
+source-to-target transfers, median latency ratios are 1.002$\times$ for prefill
+and 1.000$\times$ for decode; the corresponding 95th percentiles are
+1.610$\times$ and 1.325$\times$. Some source choices have no eligible target
+timing and are reported separately. The results characterise backend selection
+under the tested workloads and software environments; they do not isolate
+architecture from host and driver effects.
 \end{abstract}
 
 \section{Introduction}
@@ -86,17 +77,6 @@ six GPUs of Table~\ref{tab:devices}; 73{,}230 attempt records collapse to
 Every claim is a within-device ordering compared across devices, never a claim
 that one device is faster than another.
 
-Four results follow. First, most configurations have no decisive winner: the
-fastest backend is separated from the runner-up, by both a 10\% margin and a
-bootstrap interval excluding 1, on only 29\% of 447 forward-prefill
-and 34\% of 1203 decode configurations, and the rest are not shown to be
-equal, only undecided. Second, among comparisons meeting the separation
-criterion on both GPUs, winner changes were more frequent in forward prefill
-(27 of 64) than in decode (29 of 289). Third, winner changes are most frequent
-against the Blackwell part, where one decode backend produced no usable timing
-at all. Fourth, an audit of the shipped binaries records which architectures
-each wheel carries native code for, which bounds what could have run.
-
 Two contributions follow from that. The first is a protocol that records which
 kernel actually ran rather than which was requested, and that reports a winner
 only where it is separated from the runner-up. The second is the finding itself:
@@ -107,16 +87,16 @@ versions it was measured under.
 
 FlashAttention
 \citep{dao2022flashattention} keeps the $N \times N$ scores out of HBM, on A100;
-FlashAttention-2 \citep{dao2023flashattention2} reaches 50--73\% of peak FLOPs/s,
-again on A100, deferring Hopper; FlashAttention-3
-\citep{shah2024flashattention3} is that deferred work, on H100 only, at 840 BF16
-TFLOPs/s. Flash-Decoding \citep{dao2023flashdecoding} adds split-KV for
+FlashAttention-2 \citep{dao2023flashattention2} is evaluated on A100 and defers
+Hopper; FlashAttention-3 \citep{shah2024flashattention3} is that deferred work,
+evaluated on H100 only. Each reports its result on the one part its authors
+measured, which is the practice this study tests. Flash-Decoding \citep{dao2023flashdecoding} adds split-KV for
 $q_{\text{len}} = 1$ on A100, and FlashInfer \citep{ye2025flashinfer} generalises
 it into a serving engine, on A100 and H100.
 
 Evaluation inherits the habit. The PyTorch 2 paper \citep{ansel2024pytorch2}
-reports 2.27$\times$ inference geometric-mean speedup over 180+ models on one
-A100 for TorchInductor, which generates Triton \citep{tillet2019triton};
+evaluates TorchInductor, which generates Triton \citep{tillet2019triton}, on one
+A100;
 KernelBench \citep{ouyang2025kernelbench} profiles 250 PyTorch workloads on an
 L40S; TritonBench \citep{li2025tritonbench} evaluates 184 Triton operators on the
 A100. Serving systems fix the kernel by preference order rather than by
@@ -146,10 +126,11 @@ cells, with per-device coverage in Table~\ref{tab:devices}.
 \paragraph{Timing protocol.} Backend order is randomised for each
 configuration, and each backend's timing blocks are then collected
 consecutively; the harness does not alternate backends between blocks, so we do
-not claim host or thermal effects are common-mode across a comparison. For eager
-execution, each block's elapsed CUDA-event time is divided by its call count; we
+not claim host or thermal effects are common-mode across a comparison. For execution without
+CUDA Graphs, hereafter eager, each block's elapsed CUDA-event time is divided by
+its call count; we
 take the median across blocks within a process, then the median across
-processes. intervals come from a 2000-draw bootstrap that resamples whole
+processes. Intervals come from a 2000-draw bootstrap that resamples whole
 process launches, since calls inside one launch share clocks and thermal point.
 Blocks are sized to target roughly 200~\us{}. Where a cell asks for a cold
 cache the L2 buffer is cleared once before each block, so a block of more than
@@ -237,7 +218,7 @@ its own device and are excluded;
 out-of-memory predictor, and 950 raised a run-time error, all of them one
 implementation on one device (Section~\ref{sec:mech}). The remaining 151 hit the
 allocator despite passing the predictor, a defect in the predictor and not in
-the implementation it was meant to protect. No row failed numerically. All
+the implementation it was meant to protect. No evaluated correctness check failed. All
 claims are within-device orderings compared across devices, never that device A
 is faster than device B, and bandwidth denominators are measured on each host,
 not taken from a datasheet.
@@ -267,11 +248,11 @@ with at least one usable measurement.}
 \label{tab:devices}
 \end{table}
 
-\section{Does the benchmark measure what it claims?}
+\section{Dispatch validation}
 
-A latency is evidence about a kernel only if that kernel is the one that ran, so
-we record the launched kernel names for every timed row and compare them with
-the implementation the harness asked for. Coverage below is over all 54{,}213
+A latency is evidence about a kernel only if that kernel is the one that ran. We
+attempted to capture launched kernel names for each timed row; readable traces
+were obtained for 36{,}054 of 54{,}213 \code{OK} attempts. Coverage below is over all 54{,}213
 \code{OK} attempts, not the 54{,}098 eligible rows. Of those 54{,}213, 36{,}054
 (66.5\%) captured a readable trace. Grouping by the tuple that determines
 dispatch, (implementation, GPU, head dimension, dtype, GQA ratio, mode, launch),
@@ -312,10 +293,9 @@ intervals over cells. Workload counts differ by device, so the bars describe
 the configurations each device measured rather than an isolated architectural
 effect. The criterion is met on 128 of
 447 forward-prefill and 409 of 1203 decode configurations, and no device
-clears half in both regimes. Exact winner counts are therefore sensitive to
-small timing differences over most of this grid. Configurations that fail the
-criterion are not shown to be equal; they are configurations where no fastest
-backend was established. Panel B pools configurations across GPUs separately for
+clears half in both regimes. Configurations that fail the criterion are not
+shown to be equal; they are configurations where no fastest backend was
+established. Panel B pools configurations across GPUs separately for
 forward prefill and decode.}
 \label{fig:sep}
 \end{figure*}
@@ -325,7 +305,7 @@ forward prefill and decode.}
 \includegraphics[width=\textwidth]{figB_transfer.pdf}
 \caption{Winner-change rates and the latency cost of transferring a backend
 choice. \emph{Left:} the five Ampere, Ada and Hopper GPUs, over each device's
-native backend set and over the backends both devices of a pair ran on that
+all backends each GPU ran and over the backends both devices of a pair ran on that
 workload, with winners and separation re-derived inside the restricted set.
 \emph{Right:} all six GPUs, over ordered source-to-target pairs that have a
 separated winner on the source; the quantity is the target-device latency of the
@@ -342,9 +322,10 @@ flip.}
 \end{figure*}
 
 
-\paragraph{Most cells have no decisive winner.} A winner counts as \emph{separated} only if the runner-up's median latency is
-at least 1.10 times the winner's and the cluster-bootstrap CI on that ratio
-excludes 1. Only 28.6\% of forward-prefill and 34.0\% of decode
+\paragraph{Most cells have no decisive winner.} We call a backend the \emph{separated} winner of a configuration when it is the
+fastest backend meeting both the 10\% margin and the confidence criterion: the
+runner-up's median latency is at least 1.10 times its own, and the lower bound
+of a 95\% bootstrap interval on that ratio exceeds 1. Only 28.6\% of forward-prefill and 34.0\% of decode
 configurations have a separated winner, 128 of 447 and 409 of 1203, and
 Figure~\ref{fig:sep} gives the rate per device. A flip between implementations within a few percent of each
 other has not been shown to differ, so every rate below is computed
@@ -355,7 +336,7 @@ among A10, A100, L40, L40S and H100. Restriction pulls the two regimes apart. Fo
 while decode flips on 29 of 289, interval [5, 15]. Restricting each device
 pair to the backends both devices ran, and re-deriving winners and separation
 over that restricted set rather than filtering afterwards, moves prefill to 33 of
-72 and changes decode to 27 of 289, 9.3\%. Figure~\ref{fig:transfer} puts those rates beside what a flip costs: the
+72 and changes decode to 27 of 289, 9.3\%. Figure~\ref{fig:transfer} also reports source-to-target transfer latency ratios: the
 median transferred choice is 1.002$\times$ the target's own best in prefill and
 1.000$\times$ in decode. That distribution includes comparisons whose winner did
 not change, so it describes the cost of carrying a choice rather than the cost of
@@ -457,7 +438,7 @@ two regimes come from two hosts. No comparison crosses the boundary, since
 every ranking is formed within one device and one regime, and the two hosts
 measured copy bandwidth within 0.05\% of each other.
 
-\paragraph{Thin repeats, and an expensive restriction.} L40 has 3 designed
+\paragraph{Repeat counts and comparison coverage.} L40 has 3 designed
 process repeats against 5 on every other device, and a realised median of 2,
 though its cell coverage is complete. Across the dataset 1 of 11{,}835 usable
 triples has a single process repeat; its confidence interval is undefined and
@@ -490,15 +471,13 @@ timed is a single attention call on six devices from one vendor.
 
 \section{Conclusion}
 
-On these six devices, which attention implementation is fastest is not a
-property of the implementation, and a benchmark naming none of the device, the
-regime and the distribution has under-specified its result. Two practical
-consequences follow. A serving system that fixes its attention backend by
-preference order should re-measure that order on each deployment target, since
-the orderings that changed least here were the decode ones. And a
-reported winner should carry the margin separating it from the runner-up,
-because the criterion was met on only 128 of 447 forward-prefill and 409 of 1203
-decode configurations measured here.
+
+In the tested configurations, separated backend choices changed more frequently
+across Ampere, Ada and Hopper GPUs for forward prefill than for decode. Median
+transfer penalties were small, but the upper tail and missing target timings
+make the median insufficient for selecting a backend. These results support
+evaluating backend choices on the intended GPU and workload, with both
+uncertainty and execution coverage reported.
 
 \appendix
 \section{Backend availability}
@@ -507,12 +486,12 @@ Table~\ref{tab:avail} lists which comparisons were possible at all.
 
 \input{tab_avail}
 
-\section{Binary provenance}
+\section{Library builds and GPU support}
 \label{app:prov}
-The audit records which architectures the installed wheels carry native code
-for. It establishes artifact coverage, not a performance cause: no rebuild for
-a missing target was performed, and CUDA permits a cubin built for a lower minor
-compute capability to run on a higher one within a major version.
+The audit records which GPU targets the installed libraries were built for. It
+says what could have run, not why anything was fast: no rebuild for a missing
+target was performed, and CUDA permits a cubin built for a lower minor compute
+capability to run on a higher one within a major version.
 
 \begin{table}[tb]
 \centering

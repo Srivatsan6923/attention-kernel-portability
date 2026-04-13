@@ -270,7 +270,7 @@ Of {n0(web.headline.cells)} GPU/configuration observations, {pct(PF.separated)} 
 			Transferring the source GPU's choice costs a median 1.002x in prefill and
 			1.000x in decode, with 95th percentiles of 1.61x and 1.32x. 85 of 590 prefill
 			and 287 of 1974 decode source choices had no eligible target timing and are
-			counted rather than costed.
+			counted separately; they have no measured target latency to compare.
 		</li>
 	</Observation>
 </ResearchFigure>
@@ -372,7 +372,7 @@ $$
 
 with $B$ the batch, $H_{kv}$ the number of KV heads, $N$ the KV length, $D$ the head dimension, $s$ the bytes per element (2 for bf16), and the leading factor 2 counting the K and V tensors. This is a footprint, not a measurement of bytes moved from DRAM: its size alone does not establish the traffic a kernel actually generates. The effective bandwidth below is that analytic byte count divided by measured time. It is a model rather than a profiler reading, and the byte model differs between implementations, so effective bandwidth compares one implementation against itself across shapes far more safely than it compares two implementations at one shape.
 
-Every decode comparison across devices in this section is confounded. The A10 and A100 decode rows were collected under a different commit and driver than the H100 and L40 rows, so a panel-to-panel change mixes hardware with software provenance and cannot be attributed to architecture alone. Prefill has no such split.
+Every decode comparison across devices in this section is confounded. The A10 and A100 decode rows were collected under a different commit and driver than the H100 and L40 rows, so a panel-to-panel change mixes hardware with a different harness revision and driver, and cannot be attributed to architecture alone. Prefill has no such split.
 
 <ResearchFigure
 	number={5}
@@ -444,7 +444,7 @@ Values in the tables and figures are read from <a href="/data/web.json">web.json
 ## Supplementary material
 
 The sections below are the diagnostics behind the results above: dispatch
-evidence, correctness margins, implementation provenance and the full pairwise
+evidence, correctness margins, code sources and modifications, and the full pairwise
 tables. They are here for anyone checking the work rather than reading the
 result, and nothing in the main narrative depends on reading them first.
 
@@ -616,7 +616,7 @@ There are no hardware counters for any run on any platform in this study. That r
 	</Observation>
 </ResearchFigure>
 
-### Implementation provenance
+### Code sources and modifications
 
 Splitting authored code from integrated code matters here. `P3-triton` is a vendored Triton tutorial kernel with a local BF16 modification, not a kernel written for this project, and no custom CUDA kernel authorship is claimed.
 
