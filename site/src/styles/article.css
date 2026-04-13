@@ -12,10 +12,23 @@
 	min-width: 0;
 }
 
+/* Figures stay inside the content column.
+   The previous rule centred on the column midpoint and then expanded to the
+   viewport width, but the column is not centred in the viewport: a 220px table
+   of contents sits to its right. The result was every wide figure shifted about
+   134px to the left and clipped at the screen edge, with the following text
+   appearing right-shifted by comparison. Wide content scrolls instead, which
+   .fig-chart already allows. */
 .figure-wide {
-	width: min(1120px, calc(100vw - 48px));
-	margin-left: 50%;
-	transform: translateX(-50%);
+	width: 100%;
+	margin-left: 0;
+	transform: none;
+}
+
+.research-figure img {
+	display: block;
+	width: 100%;
+	height: auto;
 }
 
 .article-toc {
