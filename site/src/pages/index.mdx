@@ -192,11 +192,12 @@ The grid has two regimes. Prefill runs batch {prefillB.join(', ')} against seque
 
 Two definitions carry every number on this page.
 
-A backend only counts as the winner of a configuration if it beats the
-runner-up by a practical margin *and* the uncertainty on that margin stays on
-one side of 1. Writing $T_{g,c,b}$ for the median of per-launch median
-latencies on GPU $g$, configuration $c$, backend $b$, and $b_1, b_2$ for the
-fastest and second-fastest:
+A backend counts as the winner of a configuration only if it is the fastest
+backend meeting the 10% margin and the confidence criterion: the runner-up is at
+least 10% slower, and the lower bound of a 95% bootstrap interval on that ratio
+is above 1. Writing $T_{g,c,b}$ for the median of per-launch median latencies on
+GPU $g$, configuration $c$, backend $b$, and $b_1, b_2$ for the fastest and
+second-fastest:
 
 $$
 R_{g,c} = \frac{T_{g,c,b_2}}{T_{g,c,b_1}}
@@ -370,9 +371,22 @@ $$
 \text{bytes} \;=\; 2 \, B \, H_{kv} \, N \, D \, s
 $$
 
-with $B$ the batch, $H_{kv}$ the number of KV heads, $N$ the KV length, $D$ the head dimension, $s$ the bytes per element (2 for bf16), and the leading factor 2 counting the K and V tensors. This is a footprint, not a measurement of bytes moved from DRAM: its size alone does not establish the traffic a kernel actually generates. The effective bandwidth below is that analytic byte count divided by measured time. It is a model rather than a profiler reading, and the byte model differs between implementations, so effective bandwidth compares one implementation against itself across shapes far more safely than it compares two implementations at one shape.
+with $B$ the batch, $H_{kv}$ the number of KV heads, $N$ the KV length, $D$ the head dimension, $s$ the bytes per element (2 for bf16), and the leading factor 2 counting the K and V tensors. Effective KV bandwidth below is that byte count divided by measured time. It is
+calculated, not read from a profiler, and the byte count differs between
+backends that expand the KV cache and those that read it natively, so compare a
+backend against itself across shapes rather than against another backend at one
+shape.
 
-Every decode comparison across devices in this section is confounded. The A10 and A100 decode rows were collected under a different commit and driver than the H100 and L40 rows, so a panel-to-panel change mixes hardware with a different harness revision and driver, and cannot be attributed to architecture alone. Prefill has no such split.
+We measured decode both with and without CUDA Graphs. A decode kernel runs for
+tens of microseconds, so the per-call cost of launching it is a real fraction of
+the measurement; replaying a captured graph removes most of that launch cost.
+The figures below use execution without CUDA Graphs, hereafter eager, and each
+comparison uses the same execution mode on both GPUs.
+
+The A10 and A100 decode rows were collected under a different harness revision
+and driver than the H100 and L40 rows, so a panel-to-panel change mixes hardware
+with software version and cannot be attributed to architecture alone. Prefill
+has no such split.
 
 <ResearchFigure
 	number={5}
@@ -634,7 +648,7 @@ One layout caveat applies to the FlashInfer comparison throughout. The page size
 <ResearchFigure
 	number={7}
 	id="fig-portability-flip"
-	title={`Winner flip rate per device pair, all cells against cells with a separated winner, ${web.pairs.length} pairs`}
+	title={`Winner flip rate per device pair, all comparisons against those meeting the separation criterion, ${web.pairs.length} pairs`}
 	dataHref="/data/web.json"
 	wide={true}
 >
