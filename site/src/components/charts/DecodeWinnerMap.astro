@@ -122,7 +122,11 @@ const s = web.decode_slice;
 		const border = css('--border');
 		const bg = css('--background');
 
-		const width = Math.max(560, Math.round(chart.clientWidth || 900));
+		// Facets need room: at the column width their axis labels collided.
+		// Size to the facets and let .fig-chart scroll.
+		const nFacets = new Set(data.rows.map((r: any) => r.gpu)).size || 1;
+		const width = Math.max(560, Math.round(chart.clientWidth || 900),
+			58 + 24 + 165 * nFacets);
 		const colour = { domain: data.impls, range: data.colours };
 
 		const plot = Plot.plot({

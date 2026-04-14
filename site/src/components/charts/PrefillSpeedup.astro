@@ -66,6 +66,9 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 
 	const fmtN = (n: number) => (n >= 1024 ? `${n / 1024}k` : String(n));
 	const fmtRatio = (v: number) => (v < 10 ? v.toFixed(2) : v.toFixed(1));
+	// Printed in-cell: two decimals do not fit a heatmap cell at this facet
+	// width, and the exact ratio is in the tooltip.
+	const fmtCell = (v: number) => (v < 10 ? v.toFixed(1) : String(Math.round(v)));
 	// Latencies run from 31 us to 227 ms, so significant digits beat fixed decimals.
 	const fmtUs = (v: number) => v.toLocaleString('en-US', { maximumSignificantDigits: 4 });
 
@@ -107,7 +110,14 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 		for (let e = -Math.log2(CLAMP); e <= Math.log2(CLAMP); e++) ticks.push(2 ** e);
 
 		const narrow = root.clientWidth < 760;
-		const width = Math.max(320, root.clientWidth || 900);
+		// Six facets sharing the column width put five four-digit tick labels in
+		// about 120px each, which ran them together. Size the plot to what the
+		// facets need and let the figure scroll; .fig-chart has overflow-x.
+		const perFacet = 205;
+		const wide = 58 + 24 + perFacet * Math.max(gpus.length, 1);
+		const width = narrow
+			? Math.max(320, root.clientWidth || 900)
+			: Math.max(root.clientWidth || 900, wide);
 		const cell = 34;
 		const facet = narrow ? { fy: (d: Row) => panelOf(d.gpu) } : { fx: (d: Row) => panelOf(d.gpu) };
 		const panels = gpus.map(panelOf);
@@ -139,7 +149,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 				legend: true,
 				ticks,
 				tickFormat: (v: number) => `${v < 1 ? fmtRatio(v) : String(v)}x`,
-				label: `speedup over forced SDPA-flash (colour clamped at ${CLAMP}x, exact ratio printed)`,
+				label: `speedup over forced SDPA-flash (colour clamped at ${CLAMP}x; hover for the exact ratio)`,
 			},
 			marks: [
 				Plot.frame({ stroke: 'var(--border)', strokeWidth: 0.6 }),
@@ -160,9 +170,9 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 					...facet,
 					x: 'N',
 					y: 'B',
-					text: (d: Row) => fmtRatio(d.speedup),
+					text: (d: Row) => fmtCell(d.speedup),
 					fill: (d: Row) => inkFor(d.speedup),
-					fontSize: 10,
+					fontSize: 9,
 					pointerEvents: 'none',
 				}),
 			],

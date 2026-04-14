@@ -99,7 +99,14 @@ const { id = 'fig-prefill-latency' } = Astro.props;
 		}
 
 		const narrow = root.clientWidth < 760;
-		const width = Math.max(320, root.clientWidth || 900);
+		// Six facets sharing the column width put five four-digit tick labels in
+		// about 120px each, which ran them together. Size the plot to what the
+		// facets need and let the figure scroll; .fig-chart has overflow-x.
+		const perFacet = 165;
+		const wide = 58 + 24 + perFacet * Math.max(gpus.length, 1);
+		const width = narrow
+			? Math.max(320, root.clientWidth || 900)
+			: Math.max(root.clientWidth || 900, wide);
 		const facet: any = narrow ? { fy: 'gpu' } : { fx: 'gpu' };
 
 		const plot = Plot.plot({
@@ -119,7 +126,8 @@ const { id = 'fig-prefill-latency' } = Astro.props;
 				type: 'log',
 				label: 'sequence length N',
 				ticks: [...new Set(rows.map((r) => r.x))].sort((a, b) => a - b),
-				tickFormat: (d: number) => String(d),
+			tickFormat: (d: number) =>
+					d >= 1024 && d % 1024 === 0 ? `${d / 1024}k` : String(d),
 			},
 			y: { type: spec.type, label: spec.label, grid: true, zero: spec.type === 'linear' },
 			fx: narrow ? undefined : { domain: gpus, label: null },
