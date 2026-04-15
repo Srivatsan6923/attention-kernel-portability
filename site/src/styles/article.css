@@ -2,7 +2,7 @@
 
 .article-shell {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) 248px;
+	grid-template-columns: 248px minmax(0, 1fr);
 	gap: 56px;
 	max-width: 1360px;
 	margin: 0 auto;
@@ -10,7 +10,7 @@
 }
 
 .article-body {
-	grid-column: 1;
+	grid-column: 2;
 	min-width: 0;
 }
 
@@ -34,7 +34,7 @@
 }
 
 .article-toc {
-	grid-column: 2;
+	grid-column: 1;
 	position: sticky;
 	top: 96px;
 	align-self: start;
@@ -49,13 +49,6 @@
 	white-space: normal;
 }
 
-/* Long-form text stays readable even though the column is now wider. */
-.article-body > p,
-.article-body > ul,
-.article-body > ol,
-.article-body > blockquote {
-	max-width: 78ch;
-}
 
 /* Type */
 
@@ -213,9 +206,10 @@
 	align-items: baseline;
 	justify-content: space-between;
 	gap: 24px;
-	max-width: 1440px;
+	/* Same box as .article-shell so the header rules line up with the content. */
+	max-width: 1360px;
 	margin: 0 auto;
-	padding: 16px 24px;
+	padding: 16px 32px;
 	font-family: var(--font-heading);
 	font-size: 14.5px;
 }
