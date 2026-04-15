@@ -2,13 +2,15 @@
 
 .article-shell {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 780px) 220px;
-	gap: 48px;
-	padding: 0 24px 96px;
+	grid-template-columns: minmax(0, 1fr) 248px;
+	gap: 56px;
+	max-width: 1360px;
+	margin: 0 auto;
+	padding: 0 32px 96px;
 }
 
 .article-body {
-	grid-column: 2;
+	grid-column: 1;
 	min-width: 0;
 }
 
@@ -32,12 +34,27 @@
 }
 
 .article-toc {
-	grid-column: 3;
+	grid-column: 2;
 	position: sticky;
 	top: 96px;
 	align-self: start;
 	max-height: calc(100vh - 128px);
 	overflow-y: auto;
+	overflow-x: hidden;
+}
+
+.article-toc a,
+.article-toc li {
+	overflow-wrap: anywhere;
+	white-space: normal;
+}
+
+/* Long-form text stays readable even though the column is now wider. */
+.article-body > p,
+.article-body > ul,
+.article-body > ol,
+.article-body > blockquote {
+	max-width: 78ch;
 }
 
 /* Type */
