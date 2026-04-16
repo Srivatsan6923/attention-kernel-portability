@@ -2,7 +2,7 @@
 
 .article-shell {
 	display: grid;
-	grid-template-columns: 248px minmax(0, 1fr);
+	grid-template-columns: 268px minmax(0, 1fr);
 	gap: 56px;
 	max-width: 1360px;
 	margin: 0 auto;
@@ -36,9 +36,9 @@
 .article-toc {
 	grid-column: 1;
 	position: sticky;
-	top: 96px;
+	top: 28px;
 	align-self: start;
-	max-height: calc(100vh - 128px);
+	max-height: calc(100vh - 56px);
 	overflow-y: auto;
 	overflow-x: hidden;
 }
@@ -384,12 +384,12 @@
 
 .toc-side {
 	font-family: var(--font-heading);
-	font-size: 13.5px;
-	line-height: 1.4;
+	font-size: 15px;
+	line-height: 1.45;
 }
 
 .toc-side .toc-label {
-	font-size: 12px;
+	font-size: 13px;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
 	color: var(--text-secondary);
@@ -405,7 +405,7 @@
 }
 
 .toc-side li {
-	margin: 0 0 7px;
+	margin: 0 0 9px;
 }
 
 .toc-side li.depth-3 {
