@@ -33,11 +33,18 @@
 	height: auto;
 }
 
+/* The aside stretches the full height of the grid row, and the sticky element
+   is the list inside it. With align-self:start the aside was only as tall as
+   its own content, so the sticky box ran out of travel partway down a long
+   article and was left stranded near the bottom of the page. */
 .article-toc {
 	grid-column: 1;
+	min-width: 0;
+}
+
+.article-toc .toc-side {
 	position: sticky;
 	top: 28px;
-	align-self: start;
 	max-height: calc(100vh - 56px);
 	overflow-y: auto;
 	overflow-x: hidden;
