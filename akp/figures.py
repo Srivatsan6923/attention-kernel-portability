@@ -4,7 +4,7 @@
 
 Nothing here defines a metric. analysis.py owns the numbers and this only draws
 what it wrote, with two exceptions that are parsing rather than computing: the
-cell key (split by dashboard._data.cell_key) and results_live/provenance.txt.
+cell key (split by akp.conventions.cell_key) and results_live/provenance.txt.
 The one genuine computation is the winner/runner-up separation used to hatch
 fig1, and it reuses analysis.py's own bootstrap and practical threshold rather
 than inventing a second definition of "separated".
@@ -38,14 +38,14 @@ from matplotlib.patches import Patch, Rectangle
 from matplotlib.ticker import NullFormatter
 
 from akp.analysis import (PRACTICAL, paired_ratio_ci, per_cell_median, usable)
-# ponytail: the dashboard already owns the colour map and the cell-key parser,
-# so the paper and the dashboard cannot drift. Cost is a streamlit import.
-from dashboard._data import COLOURS, cell_key, short_gpu
+# Colours and the cell-key parser live in one module so the paper, the figures
+# and the website cannot disagree on what a colour or a key field means.
+from akp.conventions import COLOURS, cell_key, short_gpu
 
 DPI = 300
 
 # Okabe-Ito, for the categorical scales this module invents (provenance status,
-# inversion class). The per-implementation colours come from the dashboard and
+# inversion class). The per-implementation colours come from akp.conventions and
 # are disambiguated for colour-blind and greyscale readers by hatching, which
 # is the only channel that survives a black-and-white print.
 OKABE = ["#0072b2", "#e69f00", "#009e73", "#d55e00",

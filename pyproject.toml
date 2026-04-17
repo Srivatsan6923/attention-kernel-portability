@@ -7,7 +7,6 @@ dependencies = ["torch", "triton", "pandas", "pyarrow", "scipy", "matplotlib", "
 
 [project.optional-dependencies]
 kernels = ["flash-attn", "flashinfer-python"]
-dash = ["streamlit", "plotly"]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]

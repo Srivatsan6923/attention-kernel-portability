@@ -31,3 +31,7 @@ site/.astro/
 # 51 MB binary, fetched from the tectonic releases page
 paper/tectonic.exe
 paper/probe.*
+
+# Generated figure output; the released copies live in site/public/figures.
+results/figures/
+files.zip

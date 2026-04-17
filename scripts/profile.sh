@@ -51,4 +51,4 @@ nsys stats --report cuda_gpu_kern_sum --format csv \
 echo "  -> $OUT/$GPU/timeline.nsys-rep"
 
 echo
-echo "fold into the dashboard with:  python -m akp.analysis"
+echo "fold into the analysis with:  python -m akp.analysis results/raw"
