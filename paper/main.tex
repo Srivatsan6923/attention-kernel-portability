@@ -14,7 +14,9 @@
 \usepackage{booktabs}
 \usepackage{multirow}
 
-\graphicspath{{../results/figures/}}
+% The released figure PDFs are the ones the website serves, and they are
+% tracked; results/figures/ is regenerated output and is not.
+\graphicspath{{../site/public/figures/}}
 
 % fig6 (the banded winner map) is a tall single-column float. At LaTeX's
 % defaults it does not clear \floatpagefraction and is deferred past the
