@@ -116,6 +116,25 @@ def main(argv=None):
 
     # ---- devices ---------------------------------------------------------
     env = summ.get("environment", {})
+    # results/environment/<gpu>.json is written per run and is last-writer-wins,
+    # so its git_sha names whichever run finished last, not what each regime was
+    # measured at. The rows carry the truth per row; A10 and A100 decode ran at
+    # an earlier commit than their prefill. Read it from them.
+    sha_by_gpu = {}
+    for g, sub in rows.groupby(rows.gpu_name.map(short)):
+        per = {r: sorted({x[:8] for x in s})
+               for r, s in sub.groupby(sub.cell.str.split("|").str[0]).git_sha}
+        one = {v for vs in per.values() for v in vs}
+        sha_by_gpu[g] = (one.pop() if len(one) == 1 else
+                         ", ".join("%s %s" % (r, "/".join(v))
+                                   for r, v in sorted(per.items())))
+    # Planned launches per configuration, and how many survived the gates. L40
+    # was given three and its median cell keeps two; every other device kept
+    # five. A median, not a count: cells differ.
+    reps_by_gpu = {}
+    for g, sub in elig.groupby(elig.gpu_name.map(short)):
+        reps_by_gpu[g] = int(sub.groupby(["cell", "implementation"])
+                             .repeat.nunique().median())
     out["devices"] = [{
         "gpu": short(g), "cc": "sm%s%s" % (m.get("cc_major"), m.get("cc_minor")),
         "arch": {"80": "Ampere", "86": "Ampere", "89": "Ada", "90": "Hopper",
@@ -124,7 +143,8 @@ def main(argv=None):
         "l2_mb": r3((m.get("l2_bytes") or 0) / 1e6) or None,
         "bw_gbs": r3(m.get("measured_peak_bw_gbs")),
         "event_us": r3(m.get("event_overhead_us")),
-        "driver": m.get("driver"), "sha": (m.get("git_sha") or "")[:8],
+        "driver": m.get("driver"), "sha": sha_by_gpu.get(short(g), ""),
+        "reps": reps_by_gpu.get(short(g)),
     } for g, m in env.items() if short(g) in set(rows.gpu_name.map(short))]
     # A manifest exists for every device a pod ever started on, including one
     # that produced no rows. Listing it would claim a measurement we do not have.

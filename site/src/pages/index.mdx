@@ -12,6 +12,8 @@ links:
     href: https://github.com/Srivatsan6923/attention-kernel-portability/blob/main/paper/main.pdf
   - label: Chart data
     href: /data/web.json
+  - label: Measurements
+    href: https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.1
   - label: Reproduce
     href: https://github.com/Srivatsan6923/attention-kernel-portability#reproduce
 ---
@@ -153,7 +155,7 @@ The question this sweep was built to answer is narrow: if a serving stack picks 
 
 Six GPUs spanning four architecture families and five compute capabilities. Bandwidth is a copy benchmark measured in-process on that host, not a vendor figure.
 
-<ResearchTable caption={`The ${web.devices.length} devices in the sweep, all analysed at commit ${web.devices[0].sha}. L40S and H100 sit on different driver builds than the rest, which is a confound for anything compared across those panels.`}>
+<ResearchTable caption={`The ${web.devices.length} devices in the sweep. Repeats is the median number of independent process launches per configuration that survived the gates; L40 was given three and kept two, every other device five, which widens L40's intervals. L40S and H100 sit on different driver builds than the rest, and A10 and A100 decode ran at an earlier commit than their prefill, both of which are confounds for anything compared across those panels.`}>
 
 <table>
 	<thead>
@@ -165,7 +167,9 @@ Six GPUs spanning four architecture families and five compute capabilities. Band
 			<th class="num">Memory (GB)</th>
 			<th class="num">L2 (MB)</th>
 			<th class="num">Bandwidth (GB/s)</th>
+			<th class="num">Repeats</th>
 			<th>Driver</th>
+			<th>Commit</th>
 		</tr>
 	</thead>
 	<tbody>
@@ -178,7 +182,9 @@ Six GPUs spanning four architecture families and five compute capabilities. Band
 				<td class="num">{d.mem_gb.toFixed(1)}</td>
 				<td class="num">{d.l2_mb.toFixed(1)}</td>
 				<td class="num">{d.bw_gbs.toFixed(0)}</td>
+				<td class="num">{d.reps}</td>
 				<td>{d.driver}</td>
+				<td>{d.sha}</td>
 			</tr>
 		))}
 	</tbody>
@@ -444,17 +450,18 @@ Dispatch traces were captured for 66.5% of successful attempts; the remainder
 have unknown dispatch status. Bandwidth figures use analytic byte counts rather
 than measured DRAM traffic.
 
-All analysis on this page comes from commit `{web.devices[0].sha}` on the devices listed above ({web.devices.map((d) => `${d.gpu} ${d.cc}`).join(', ')}), under torch {web.software.torch}, CUDA {web.software.cuda}, Triton {web.software.triton}, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. The separate Hopper flash-attn interface package reports as {String(web.software.flash_attn_interface)}, and FlashAttention-3 rows exist on H100 only.
+All analysis on this page runs over the devices listed above ({web.devices.map((d) => `${d.gpu} ${d.cc}`).join(', ')}), under torch {web.software.torch}, CUDA {web.software.cuda}, Triton {web.software.triton}, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. The separate Hopper flash-attn interface package reports as {String(web.software.flash_attn_interface)}, and FlashAttention-3 rows exist on H100 only. The measurement commits are per device in the table above; A10 and A100 decode ran at an earlier one than their prefill.
 
-Three commands regenerate every number on this page from the raw sweep, in order:
+Measurements for this release are available under <a href="https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.1">v1.1</a>, with SHA-256 checksums and instructions for regenerating the results. Four commands then reproduce the analysis from those recorded measurements, in order:
 
 ```bash
-python -m akp.analysis    # separation, pairs, winners, dispatch and correctness tables
-python -m akp.figures     # static figure PDFs into site/public/figures
-python -m akp.webdata     # site/public/data/web.json, the only source this page reads
+python -m akp.analysis ../akp-measurements-v1/raw --out results/processed
+python paper/ledger.py           # the frozen ledger every surface quotes
+python -m akp.figures            # static figure PDFs into site/public/figures
+python -m akp.webdata            # site/public/data/web.json, the only source this page reads
 ```
 
-Values in the tables and figures are read from <a href="/data/web.json">web.json</a> at build or run time. The summary paragraph above is currently written out rather than generated, so regenerating the data does not rewrite it.
+Repeating the six-GPU collection is a separate job and needs the hardware. Values in the tables and figures are read from <a href="/data/web.json">web.json</a> at build or run time. The summary paragraph above is written out rather than generated, so regenerating the data does not rewrite it.
 ## Supplementary material
 
 The sections below are the diagnostics behind the results above: dispatch
