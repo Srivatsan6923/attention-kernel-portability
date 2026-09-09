@@ -50,6 +50,41 @@ def test_portability_scores_the_winner_at_one_and_drops_unshared_cells():
     assert p.p_ratio[("g1", "b")] == 0.5 and p.p_ratio[("g2", "a")] == 0.25
 
 
+def test_a_lost_launch_does_not_stop_the_inversion_scan():
+    """One backend losing a launch to an OOM must not abort the whole scan.
+
+    P0-naive lost the fifth launch at eight RTX 5090 cells. The scan ranked on
+    all five launches and bootstrapped the four they shared, and the guard that
+    catches exactly that mismatch turned it into a crash: `python -m
+    akp.analysis` could not run on the released measurements at all. The pair
+    is judged on the launches the two backends have in common, so the sign
+    test, the 10% test and the interval describe one population.
+    """
+    d = cells_frame([("g1", "a", cell(256), 100.0), ("g1", "b", cell(256), 200.0),
+                     ("g2", "a", cell(256), 200.0), ("g2", "b", cell(256), 100.0)])
+    d["repeat_ids"] = [[0, 1, 2]] * len(d)
+    # g1's "a" lost launch 2, and its surviving launches are much slower, so a
+    # scan that ignored the pairing would rank on 100.0 and interval on 400.0.
+    i = d.index[(d.gpu_name == "g1") & (d.implementation == "a")][0]
+    d.at[i, "samples"], d.at[i, "repeat_ids"] = [400.0, 400.0], [0, 1]
+
+    out, examined = analysis.inversions(d, "g1", "g2")
+    assert examined == 1
+    # a is the slower of the two on g1 now, and slower on g2: no flip.
+    assert len(out) == 0
+    assert out.attrs["pairs_unpairable"] == 0
+
+
+def test_shared_launches_still_refuses_a_silent_mismatch():
+    """Relaxing the scan must not relax the ledger, where the guard belongs."""
+    import pytest
+    a, b = np.array([1.0, 2.0]), np.array([1.0, 2.0, 3.0])
+    with pytest.raises(ValueError, match="launch sets differ"):
+        analysis.shared_launches(a, b, [0, 1], [0, 1, 2])
+    x, y = analysis.shared_launches(a, b, [0, 1], [0, 1, 2], strict=False)
+    assert len(x) == len(y) == 2
+
+
 def rows_frame(rows):
     d = pd.DataFrame(rows, columns=["cache", "inner_k", "median_us"])
     d["status"], d["gpu_name"], d["implementation"] = "OK", "g", "a"

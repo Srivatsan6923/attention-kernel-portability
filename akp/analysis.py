@@ -409,6 +409,32 @@ def winner_flips(cells: pd.DataFrame) -> dict:
             "top1_stable": float((common == 1).mean())}
 
 
+def shared_launches(a, b, ids_a, ids_b, strict=True):
+    """Restrict two per-launch arrays to the launches they actually share.
+
+    The winner and runner-up of a cell share a launch set in all 2,082 cells,
+    so the ledger keeps strict=True and a future sweep that breaks the
+    assumption fails loudly rather than quietly comparing two populations.
+    Ranking every implementation pair is a wider question: in 50 of 29,304
+    pairs, all of them on the RTX 5090 and all involving P0-naive, one backend
+    lost a launch to an out-of-memory failure. Those callers restrict both
+    sides here first, so the ratio they screen on and the interval they
+    bootstrap describe the same launches.
+    """
+    if len(set(ids_a)) != len(ids_a) or len(set(ids_b)) != len(ids_b):
+        raise ValueError("duplicate launch ids: %r / %r" % (ids_a, ids_b))
+    ia = {v: i for i, v in enumerate(ids_a)}
+    ib = {v: i for i, v in enumerate(ids_b)}
+    keys = sorted(set(ia) & set(ib))
+    if strict and (len(keys) != len(ia) or len(keys) != len(ib)):
+        raise ValueError(
+            "launch sets differ: %d shared of %d and %d. Ranking and "
+            "paired comparison would use different repeat populations; "
+            "pass strict_pairing=False to fall back to the shared subset."
+            % (len(keys), len(ia), len(ib)))
+    return a[[ia[k] for k in keys]], b[[ib[k] for k in keys]]
+
+
 def paired_ratio_ci(a, b, n=2000, seed=0, ids_a=None, ids_b=None,
                     strict_pairing=True):
     """Cluster bootstrap over process launches, on the reported estimator.
@@ -439,24 +465,9 @@ def paired_ratio_ci(a, b, n=2000, seed=0, ids_a=None, ids_b=None,
     # repeat while resampling only the shared ones described two different
     # things, and produced a 50x point ratio beside a [0.5, 0.5] interval.
     if ids_a is not None and ids_b is not None:
-        if len(set(ids_a)) != len(ids_a) or len(set(ids_b)) != len(ids_b):
-            raise ValueError("duplicate launch ids: %r / %r" % (ids_a, ids_b))
-        ia = {v: i for i, v in enumerate(ids_a)}
-        ib = {v: i for i, v in enumerate(ids_b)}
-        keys = sorted(set(ia) & set(ib))
-        # The paper states that compared backends share a launch set throughout
-        # this dataset, and they do, in all 2,082 cells. Enforce it rather than
-        # assume it: if a future sweep leaves one backend unsupported in some
-        # launches, the ranking would use every repeat while the interval used
-        # only the shared ones, which is the defect this function was fixed for.
-        if strict_pairing and (len(keys) != len(ia) or len(keys) != len(ib)):
-            raise ValueError(
-                "launch sets differ: %d shared of %d and %d. Ranking and "
-                "paired comparison would use different repeat populations; "
-                "pass strict_pairing=False to fall back to the shared subset."
-                % (len(keys), len(ia), len(ib)))
-        a = a[[ia[k] for k in keys]]
-        b = b[[ib[k] for k in keys]]
+        a, b = shared_launches(a, b, ids_a, ids_b, strict=strict_pairing)
+        if len(a) == 0:
+            return nan3
 
     # A single launch cannot support an interval: resampling one value returns
     # it every draw, giving zero width that then "excludes 1" for any ratio.
@@ -527,6 +538,15 @@ def stability(cells: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
+def _pair(s, a, b, ids):
+    """Two implementations' per-launch samples at one cell, on shared launches."""
+    if not ids:
+        return np.asarray(s.samples[a], float), np.asarray(s.samples[b], float)
+    return shared_launches(np.asarray(s.samples[a], float),
+                           np.asarray(s.samples[b], float),
+                           s.repeat_ids[a], s.repeat_ids[b], strict=False)
+
+
 def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05,
                regime=None):
     """Pairs whose ordering flips between two GPUs.
@@ -539,7 +559,7 @@ def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05,
     substring of "NVIDIA A100-SXM4-80GB", so a contains() match would fold the
     two devices into one and compare a device against itself.
     """
-    out, examined = [], 0
+    out, examined, unpairable = [], 0, 0
     ids = "repeat_ids" in cells.columns
     for cell in sorted(set(cells[cells.gpu_name == g1].cell)
                        & set(cells[cells.gpu_name == g2].cell)):
@@ -552,14 +572,23 @@ def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05,
         for i, a in enumerate(common):
             for b in common[i + 1:]:
                 examined += 1
-                r1 = s1.median_us[a] / s1.median_us[b]
-                r2 = s2.median_us[a] / s2.median_us[b]
+                # Screen and bootstrap the same launches. Where the two
+                # backends share every launch, which is 29,254 of the 29,304
+                # pairs here, this is the full set and the ratio is what the
+                # per-cell median already reported. Where one lost a launch to
+                # an OOM, restricting both sides is what keeps the sign test,
+                # the 10% test and the interval talking about one population.
+                x1, y1 = _pair(s1, a, b, ids)
+                x2, y2 = _pair(s2, a, b, ids)
+                if not len(x1) or not len(x2):
+                    unpairable += 1
+                    continue
+                r1 = float(np.median(x1) / np.median(y1))
+                r2 = float(np.median(x2) / np.median(y2))
                 if np.sign(r1 - 1) == np.sign(r2 - 1):
                     continue
-                ka = dict(ids_a=s1.repeat_ids[a], ids_b=s1.repeat_ids[b]) if ids else {}
-                kb = dict(ids_a=s2.repeat_ids[a], ids_b=s2.repeat_ids[b]) if ids else {}
-                lo1, hi1 = _boot_ratio(s1.samples[a], s1.samples[b], **ka)
-                lo2, hi2 = _boot_ratio(s2.samples[a], s2.samples[b], **kb)
+                lo1, hi1 = _boot_ratio(x1, y1)
+                lo2, hi2 = _boot_ratio(x2, y2)
                 sig = bool((lo1 > 1 or hi1 < 1) and (lo2 > 1 or hi2 < 1))
                 practical = bool(max(r1, 1 / r1) >= PRACTICAL
                                  and max(r2, 1 / r2) >= PRACTICAL)
@@ -576,6 +605,7 @@ def inversions(cells: pd.DataFrame, g1: str, g2: str, fdr=0.05,
     if len(df):
         df["pairs_examined"] = examined
     df.attrs["pairs_examined"] = examined
+    df.attrs["pairs_unpairable"] = unpairable
     return df, examined
 
 
