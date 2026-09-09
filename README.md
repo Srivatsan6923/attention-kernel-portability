@@ -39,7 +39,7 @@ This checks the pipeline, not the study. Use the pinned image in
 `env/Dockerfile`; full-run scripts are in `scripts/`.
 
 Measurements for this release are available under
-[v1.1](https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.1),
+[v1.2](https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.2),
 with SHA-256 checksums and instructions for regenerating the results. That
 reproduces the analysis from recorded measurements:
 

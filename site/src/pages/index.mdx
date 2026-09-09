@@ -13,7 +13,7 @@ links:
   - label: Chart data
     href: /data/web.json
   - label: Measurements
-    href: https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.1
+    href: https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.2
   - label: Reproduce
     href: https://github.com/Srivatsan6923/attention-kernel-portability#reproduce
 ---
@@ -452,7 +452,7 @@ than measured DRAM traffic.
 
 All analysis on this page runs over the devices listed above ({web.devices.map((d) => `${d.gpu} ${d.cc}`).join(', ')}), under torch {web.software.torch}, CUDA {web.software.cuda}, Triton {web.software.triton}, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. The separate Hopper flash-attn interface package reports as {String(web.software.flash_attn_interface)}, and FlashAttention-3 rows exist on H100 only. The measurement commits are per device in the table above; A10 and A100 decode ran at an earlier one than their prefill.
 
-Measurements for this release are available under <a href="https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.1">v1.1</a>, with SHA-256 checksums and instructions for regenerating the results. Four commands then reproduce the analysis from those recorded measurements, in order:
+Measurements for this release are available under <a href="https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.2">v1.2</a>, with SHA-256 checksums and instructions for regenerating the results. Four commands then reproduce the analysis from those recorded measurements, in order:
 
 ```bash
 python -m akp.analysis ../akp-measurements-v1/raw --out results/processed
