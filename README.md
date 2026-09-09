@@ -36,9 +36,21 @@ python -m akp.analysis results/raw
 ```
 
 This checks the pipeline, not the study. Use the pinned image in
-`env/Dockerfile`; full-run scripts are in `scripts/`. The measurement records
-behind the published numbers are not released yet, so the six-GPU study cannot
-be reproduced from this repository alone.
+`env/Dockerfile`; full-run scripts are in `scripts/`.
+
+Measurements for this release are available under
+[v1.1](https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.1),
+with SHA-256 checksums and instructions for regenerating the results. That
+reproduces the analysis from recorded measurements:
+
+```bash
+sha256sum -c SHA256SUMS.txt
+unzip akp-measurements-v1.zip
+python -m akp.analysis ../akp-measurements-v1/raw --out results/processed
+python paper/ledger.py
+```
+
+Repeating the six-GPU collection is a separate job and needs the hardware.
 
 ## Scope
 

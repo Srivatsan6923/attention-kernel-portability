@@ -75,7 +75,11 @@ another.
 
 We time 10 prefill and 6 decode implementations over 403 configurations on the
 six GPUs of Table~\ref{tab:devices}; 73{,}230 attempt records collapse to
-11{,}835 usable (GPU, configuration, implementation) medians.\footnote{Harness, analysis and figure code: \url{https://github.com/Srivatsan6923/attention-kernel-portability}}
+11{,}835 usable (GPU, configuration, implementation) medians.\footnote{Harness,
+analysis and figure code: \url{https://github.com/Srivatsan6923/attention-kernel-portability}.
+Measurements for this release are available under
+\url{https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.1},
+with SHA-256 checksums and instructions for regenerating the results.}
 Every claim is a within-device ordering compared across devices, never a claim
 that one device is faster than another.
 
@@ -176,9 +180,13 @@ where $L_{95}$ is the lower endpoint of a 95\% bootstrap interval on the same
 ratio, resampling whole process launches. Both conditions are required. A
 configuration that fails the rule has not been shown to have equal backends; it
 is one where no fastest backend was established. Equations~\ref{eq:lat}
-and~\ref{eq:ratio} are computed over the same launches: the two backends being
-compared ran in identical launch sets in all 2{,}082 cells here, so no
-restriction to a shared subset was needed.
+and~\ref{eq:ratio} are computed over the same launches: the fastest and
+second-fastest backends ran in identical launch sets in all 2{,}082 cells here,
+so no restriction to a shared subset was needed. The wider scan over every
+implementation pair, which produces the inversion counts, does need one. In 50
+of 29{,}304 pairs, all of them on the RTX 5090 and all involving the naive
+reference, one backend lost a launch to an out-of-memory failure; those pairs
+are ranked and bootstrapped on the launches the two backends share.
 
 Let $\mathcal{B}_{g,c}$ be the backends with a usable measurement at $(g,c)$ and
 $b^{*}_{g,c}$ the winner. Over a set $\mathcal{E}$ of matched comparisons, each
@@ -231,7 +239,7 @@ not taken from a datasheet.
 \setlength{\tabcolsep}{3.2pt}
 \begin{tabular}{lllrrr}
 \toprule
-GPU & cc & family & BW & reps & cells \\
+GPU & cc & family & BW & \shortstack{planned\\repeats} & cells \\
  & & & (GB/s) & pre/dec & pre/dec \\
 \midrule
 A100     & 8.0  & Ampere    & 1732.8 & 5/5 & 144/192 \\
@@ -242,11 +250,12 @@ H100     & 9.0  & Hopper    & 2979.7 & 5/5 & 159/244 \\
 RTX 5090 & 12.0 & Blackwell & 1517.5 & 5/5 & 144/192 \\
 \bottomrule
 \end{tabular}
-\caption{The six devices. BW is peak copy bandwidth measured in-process on that
-host, never a vendor figure. \emph{reps} is the designed number of independent
-process repeats per cell; where a run was cut short the realised median is
-lower, at 2 for L40. \emph{cells} counts configurations
-with at least one usable measurement.}
+\caption{GPU configurations and measurement coverage. Bandwidth is measured
+using an in-process copy benchmark on that host, never a vendor figure.
+\emph{Planned repeats} are independent process launches, prefill/decode. L40 had
+three planned launches per configuration; its median number of usable repeats
+was two, where every other device reached five. \emph{Cells} counts
+configurations with at least one usable measurement.}
 \label{tab:devices}
 \end{table}
 
@@ -440,9 +449,11 @@ two regimes come from two hosts. No comparison crosses the boundary, since
 every ranking is formed within one device and one regime, and the two hosts
 measured copy bandwidth within 0.05\% of each other.
 
-\paragraph{Repeat counts and comparison coverage.} L40 has 3 designed
-process repeats against 5 on every other device, and a realised median of 2,
-though its cell coverage is complete. Across the dataset 1 of 11{,}835 usable
+\paragraph{Repeat counts and comparison coverage.} L40 has fewer independent
+repeats than the other GPUs, 3 planned against 5 and a median of 2 usable,
+which limits the precision of its bootstrap intervals; its cell coverage is
+complete. Excluding L40 changes the overall separation rate from 28.6\% to
+30.1\% for forward prefill and from 34.0\% to 34.2\% for decode. Across the dataset 1 of 11{,}835 usable
 triples has a single process repeat; its confidence interval is undefined and
 it cannot establish separation. Requiring a separated winner on both sides is a
 heavy restriction: it leaves 64 of the 720 forward-prefill and 289 of the 1916
