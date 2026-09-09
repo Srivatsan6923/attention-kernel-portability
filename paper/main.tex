@@ -252,10 +252,10 @@ RTX 5090 & 12.0 & Blackwell & 1517.5 & 5/5 & 144/192 \\
 \end{tabular}
 \caption{GPU configurations and measurement coverage. Bandwidth is measured
 using an in-process copy benchmark on that host, never a vendor figure.
-\emph{Planned repeats} are independent process launches, prefill/decode. L40 had
-three planned launches per configuration; its median number of usable repeats
-was two, where every other device reached five. \emph{Cells} counts
-configurations with at least one usable measurement.}
+\emph{Planned repeats} are independent process launches, prefill/decode. Five
+process repeats were planned per configuration, except L40 with three. The
+median number of eligible repeats on L40 was two. \emph{Cells} counts
+configurations with at least one eligible measurement.}
 \label{tab:devices}
 \end{table}
 
@@ -449,11 +449,7 @@ two regimes come from two hosts. No comparison crosses the boundary, since
 every ranking is formed within one device and one regime, and the two hosts
 measured copy bandwidth within 0.05\% of each other.
 
-\paragraph{Repeat counts and comparison coverage.} L40 has fewer independent
-repeats than the other GPUs, 3 planned against 5 and a median of 2 usable,
-which limits the precision of its bootstrap intervals; its cell coverage is
-complete. Excluding L40 changes the overall separation rate from 28.6\% to
-30.1\% for forward prefill and from 34.0\% to 34.2\% for decode. Across the dataset 1 of 11{,}835 usable
+\paragraph{Repeat counts and comparison coverage.} Across the dataset 1 of 11{,}835 usable
 triples has a single process repeat; its confidence interval is undefined and
 it cannot establish separation. Requiring a separated winner on both sides is a
 heavy restriction: it leaves 64 of the 720 forward-prefill and 289 of the 1916
@@ -493,6 +489,14 @@ evaluating backend choices on the intended GPU and workload, with both
 uncertainty and execution coverage reported.
 
 \appendix
+\section{Repeat-count sensitivity}
+\label{app:reps}
+L40 was given three planned process repeats against five elsewhere, and its
+median configuration keeps two, so its bootstrap intervals are the widest in
+the study. Dropping the device entirely moves the separation rate from 28.6\%
+to 30.1\% for forward prefill and from 34.0\% to 34.2\% for decode. Neither
+headline depends on it.
+
 \section{Backend availability}
 \label{app:avail}
 Table~\ref{tab:avail} lists which comparisons were possible at all.
