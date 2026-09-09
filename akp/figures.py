@@ -1044,11 +1044,16 @@ def main(argv=None):
     ap.add_argument("processed", nargs="?", default="results/processed",
                     help="directory analysis.py wrote")
     ap.add_argument("--out", default="results/figures")
-    ap.add_argument("--provenance", default="results_live/provenance.txt")
+    # analysis.py copies the cuobjdump summary in beside its own output, so the
+    # default follows the processed directory rather than a local scratch path.
+    ap.add_argument("--provenance", default=None,
+                    help="cuobjdump summary; default <processed>/binary_provenance.txt")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return _selftest()
+    if a.provenance is None:
+        a.provenance = os.path.join(a.processed, "binary_provenance.txt")
 
     _style()
     d = load(a.processed)

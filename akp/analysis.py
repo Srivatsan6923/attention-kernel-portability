@@ -13,6 +13,7 @@ import argparse
 import glob
 import json
 import os
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -919,6 +920,18 @@ def main(argv=None):
                                           sel["median_regret"], sel["p95_regret"]))
     else:
         print("selector: not fitted --", sel["error"])
+
+    # The cuobjdump summary is collected once per sweep and lives beside the
+    # raw shards, not under results/. Copy it in so everything downstream of
+    # this command reads one directory: figures had a default pointing at a
+    # local scratch path, so fig4 was skipped from any other checkout.
+    for name in ("binary_provenance.txt", "provenance.txt"):
+        src = _beside(a.raw, name)
+        if os.path.exists(src):
+            shutil.copyfile(src, os.path.join(a.out, "binary_provenance.txt"))
+            break
+    else:
+        print("no binary_provenance.txt beside %r; fig4 will be skipped" % a.raw)
     print("wrote", a.out)
 
 
