@@ -38,19 +38,25 @@ python -m akp.analysis results/raw
 This checks the pipeline, not the study. Use the pinned image in
 `env/Dockerfile`; full-run scripts are in `scripts/`.
 
+## Reproduce
+
 Measurements for this release are available under
 [v1.2](https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.2),
-with SHA-256 checksums and instructions for regenerating the results. That
-reproduces the analysis from recorded measurements:
+with SHA-256 checksums and instructions for regenerating the results. Download
+the three assets there, then reproduce the analysis from recorded measurements:
 
 ```bash
 sha256sum -c SHA256SUMS.txt
 unzip akp-measurements-v1.zip
 python -m akp.analysis ../akp-measurements-v1/raw --out results/processed
 python paper/ledger.py
+python -m akp.figures && python -m akp.figures_portability && python -m akp.webdata
 ```
 
-Repeating the six-GPU collection is a separate job and needs the hardware.
+About two minutes on a CPU. Every tracked figure and the website's chart data
+come back byte for byte, and `DATA_README.md` lists the counts the ledger must
+print. Repeating the six-GPU collection is a separate job and needs the
+hardware.
 
 ## Scope
 

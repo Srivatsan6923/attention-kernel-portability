@@ -11,6 +11,10 @@
 
 .article-body {
 	grid-column: 2;
+	/* Explicit row: the aside is second in the DOM but first in the grid, and
+	   auto-placement never walks the cursor backwards, so without this the
+	   aside lands in row 2 underneath the article. */
+	grid-row: 1;
 	min-width: 0;
 }
 
@@ -36,9 +40,11 @@
 /* The aside stretches the full height of the grid row, and the sticky element
    is the list inside it. With align-self:start the aside was only as tall as
    its own content, so the sticky box ran out of travel partway down a long
-   article and was left stranded near the bottom of the page. */
+   article and was left stranded near the bottom of the page. It needs
+   grid-row too — see .article-body. */
 .article-toc {
 	grid-column: 1;
+	grid-row: 1;
 	min-width: 0;
 }
 

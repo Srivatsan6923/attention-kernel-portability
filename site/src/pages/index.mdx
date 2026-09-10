@@ -11,7 +11,7 @@ links:
   - label: Paper
     href: https://github.com/Srivatsan6923/attention-kernel-portability/blob/main/paper/main.pdf
   - label: Chart data
-    href: /data/web.json
+    href: data/web.json
   - label: Measurements
     href: https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.2
   - label: Reproduce
@@ -238,11 +238,11 @@ Of {n0(web.headline.cells)} GPU/configuration observations, {pct(PF.separated)} 
 	number={1}
 	id="fig-separation"
 	title="Separated fastest backends by GPU, forward prefill and decode"
-	dataHref="/data/web.json"
-	downloadHref="/figures/figA_separation.pdf"
+	dataHref="data/web.json"
+	downloadHref="figures/figA_separation.pdf"
 	wide={true}
 >
-	<img src="/figures/figA_separation.png" alt="Separated fastest backends by GPU" />
+	<img src="figures/figA_separation.png" alt="Separated fastest backends by GPU" />
 	<Observation slot="observations">
 		<li>
 			<strong>Most configurations have no separated fastest backend.</strong> The
@@ -261,11 +261,11 @@ Of {n0(web.headline.cells)} GPU/configuration observations, {pct(PF.separated)} 
 	number={2}
 	id="fig-transfer"
 	title="Winner changes, and the latency cost of transferring a backend choice"
-	dataHref="/data/web.json"
-	downloadHref="/figures/figB_transfer.pdf"
+	dataHref="data/web.json"
+	downloadHref="figures/figB_transfer.pdf"
 	wide={true}
 >
-	<img src="/figures/figB_transfer.png" alt="Winner changes and transfer cost" />
+	<img src="figures/figB_transfer.png" alt="Winner changes and transfer cost" />
 	<Observation slot="observations">
 		<li>
 			<strong>Winners change more often in forward prefill than in decode.</strong>
@@ -291,7 +291,7 @@ Prefill is compute-shaped and commit-homogeneous: every prefill row in this swee
 	number={3}
 	id="fig-prefill-latency"
 	title={`Prefill median latency, achieved throughput and peak memory against sequence length, batch ${web.prefill_slice.batch}, head_dim ${web.prefill_slice.head_dim}, ${web.prefill_slice.dtype}`}
-	dataHref="/data/web.json"
+	dataHref="data/web.json"
 	wide={false}
 >
 	<PrefillLatency />
@@ -339,7 +339,7 @@ Normalising against one baseline makes the shape of the win clearer, and the abs
 	number={4}
 	id="fig-prefill-speedup"
 	title="Prefill speedup over forced SDPA-flash by batch and sequence length, with absolute latency in every cell"
-	dataHref="/data/web.json"
+	dataHref="data/web.json"
 	wide={false}
 >
 	<PrefillSpeedup />
@@ -398,7 +398,7 @@ has no such split.
 	number={5}
 	id="fig-decode-latency"
 	title={`Single-token decode step time and effective KV bandwidth against KV length, hkv=${web.decode_slice.hkv}, head_dim=${web.decode_slice.head_dim}, ${web.decode_slice.dtype}`}
-	dataHref="/data/web.json"
+	dataHref="data/web.json"
 	wide={false}
 >
 	<DecodeLatency />
@@ -461,7 +461,7 @@ python -m akp.figures            # static figure PDFs into site/public/figures
 python -m akp.webdata            # site/public/data/web.json, the only source this page reads
 ```
 
-Repeating the six-GPU collection is a separate job and needs the hardware. Values in the tables and figures are read from <a href="/data/web.json">web.json</a> at build or run time. The summary paragraph above is written out rather than generated, so regenerating the data does not rewrite it.
+Repeating the six-GPU collection is a separate job and needs the hardware. Values in the tables and figures are read from <a href="data/web.json">web.json</a> at build or run time. The summary paragraph above is written out rather than generated, so regenerating the data does not rewrite it.
 ## Supplementary material
 
 The sections below are the diagnostics behind the results above: dispatch
@@ -609,7 +609,7 @@ There are no hardware counters for any run on any platform in this study. That r
 	number={5}
 	id="fig-roofline"
 	title="Achieved throughput against modelled arithmetic intensity, analytic traffic, no measured roof"
-	dataHref="/data/web.json"
+	dataHref="data/web.json"
 	wide={true}
 >
 	<Roofline />
@@ -656,7 +656,7 @@ One layout caveat applies to the FlashInfer comparison throughout. The page size
 	number={7}
 	id="fig-portability-flip"
 	title={`Winner flip rate per device pair, all comparisons against those meeting the separation criterion, ${web.pairs.length} pairs`}
-	dataHref="/data/web.json"
+	dataHref="data/web.json"
 	wide={true}
 >
 	<PortabilityFlip />

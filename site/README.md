@@ -51,6 +51,7 @@ All commands are run from the root of the project, from a terminal:
 | `npm run dev`             | Starts local dev server at `localhost:4321`      |
 | `npm run build`           | Build your production site to `./dist/`          |
 | `npm run preview`         | Preview your build locally, before deploying     |
+| `npm run deploy`          | Build, then copy `dist/` over `../../Portfolio/srivatsan6923.github.io/projects/attention-kernel-portability/`. Run this instead of hand-editing the portfolio copy, or its numbers drift from `web.json`. |
 | `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
 | `npm run astro -- --help` | Get help using the Astro CLI                     |
 

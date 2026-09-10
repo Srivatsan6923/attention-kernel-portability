@@ -7,10 +7,11 @@ export const SITE_AUTHOR = 'Srivatsan Sarvesan';
 
 export const REPO_URL = 'https://github.com/Srivatsan6923/attention-kernel-portability';
 
-// Header nav. Point Projects and CV at real targets when they exist.
+// Header nav. Absolute paths resolve to the portfolio this page is mounted in.
 export const NAV = [
-	{ label: 'Research', href: '/' },
-	{ label: 'Projects', href: 'https://github.com/Srivatsan6923' },
-	{ label: 'CV', href: 'https://github.com/Srivatsan6923' },
+	{ label: 'Home', href: '/' },
+	{ label: 'Projects', href: '/projects/' },
+	{ label: 'Publications', href: '/publications/' },
+	{ label: 'CV', href: '/cv/' },
 	{ label: 'GitHub', href: REPO_URL },
 ];
