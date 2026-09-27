@@ -1,2 +1,2 @@
-# Prebuilt FA3 wheel, dropped here so the image builds without compiling.
-# 406 MB, produced on a Hopper host; see the Dockerfile for how to rebuild it.
+# Put the prebuilt FlashAttention 3 wheel here so the image builds without compiling it.
+# It is about 406 MB and was built on a Hopper host. The Dockerfile shows how to rebuild it.

@@ -6,7 +6,7 @@ interface Props {
 const { items } = Astro.props;
 ---
 
-<!-- Pass `items`, or write <li> elements into the slot. -->
+<!-- Pass `items` or put <li> elements in the slot. -->
 <ul class="observation">
 	{items ? items.map((t) => <li set:html={t} />) : <slot />}
 </ul>

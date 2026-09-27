@@ -1,8 +1,7 @@
 ---
-// Faceted prefill speedup heatmap: one panel per GPU, x = sequence length,
-// y = batch, colour = speedup over the forced SDPA-flash baseline, diverging
-// about 1.0. A select picks the implementation. Every value is read from
-// public/data/web.json at runtime; nothing numeric is written into this file.
+// Prefill speedup heatmap with one panel per GPU. x is sequence length, y is
+// batch and colour is speedup over SDPA-flash, centred on 1.0. A select picks
+// the implementation. All values come from public/data/web.json at runtime.
 interface Props {
 	id?: string;
 }
@@ -12,7 +11,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 <figure class="figure-wide prefill-speedup" id={id} data-prefill-speedup>
 	<div class="chart-head">
 		<div class="chart-title">
-			Prefill speedup over forced SDPA-flash, by batch and sequence length
+			Prefill speedup over SDPA-flash by batch and sequence length
 		</div>
 		<label class="chart-control">
 			<span>Implementation</span>
@@ -26,9 +25,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 <script>
 	import * as Plot from '@observablehq/plot';
 
-	// Fixed backend identity, the same seven families as every other chart on
-	// the page. Used here only to order and label the select, since the fill
-	// carries speedup rather than backend.
+	// Family names, used only to order and label the select.
 	const FAMILY: [RegExp, string][] = [
 		[/^P1-inductor|^D1-inductor/, 'TorchInductor'],
 		[/^P2[bcd]?-sdpa|^D2-sdpa/, 'SDPA'],
@@ -41,10 +38,9 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 	const familyIndex = (impl: string) => FAMILY.findIndex(([re]) => re.test(impl));
 	const familyOf = (impl: string) => FAMILY[familyIndex(impl)][1];
 
-	// ponytail: the ramp is clamped at 4x either way so the band around 1.0 stays
-	// readable; the naive kernel runs up to 30x slower and would otherwise flatten
-	// every other cell. The exact ratio is printed in the cell and in the hover,
-	// so the clamp costs no information. Raise CLAMP if it ever hides a cell.
+	// Clamp the colour ramp at 4x in both directions. The naive kernel is up to
+	// 30x slower and would wash out every other cell. Exact ratios are in the
+	// cell text and the tooltip.
 	const CLAMP = 4;
 
 	type Row = {
@@ -66,19 +62,17 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 
 	const fmtN = (n: number) => (n >= 1024 ? `${n / 1024}k` : String(n));
 	const fmtRatio = (v: number) => (v < 10 ? v.toFixed(2) : v.toFixed(1));
-	// Printed in-cell: two decimals do not fit a heatmap cell at this facet
-	// width, and the exact ratio is in the tooltip.
+	// One decimal fits in a cell. The tooltip has the exact ratio.
 	const fmtCell = (v: number) => (v < 10 ? v.toFixed(1) : String(Math.round(v)));
-	// Latencies run from 31 us to 227 ms, so significant digits beat fixed decimals.
+	// Latencies range from 31 us to 227 ms, so use significant digits.
 	const fmtUs = (v: number) => v.toLocaleString('en-US', { maximumSignificantDigits: 4 });
 
 	function render(root: HTMLElement, fig: HTMLElement, web: any, impl: string) {
 		const all: Row[] = web.prefill_speedup;
 		const rows = all.filter((r) => r.impl === impl);
 
-		// Panels stay in compute-capability order, and every GPU that appears
-		// anywhere in the slice keeps its panel, so an implementation that ran on
-		// one part shows four empty panels instead of silently shrinking.
+		// Keep every GPU panel in compute-capability order, even when the chosen
+		// implementation did not run there.
 		const gpus: string[] = web.devices
 			.filter((d: any) => all.some((r) => r.gpu === d.gpu))
 			.sort(
@@ -99,8 +93,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 		const slower = token(fig, '--failure');
 		const faster = token(fig, '--success');
 		const mid = token(fig, '--surface');
-		// Ink for the number printed in a cell: the saturated ends of the ramp
-		// take contrasting ink, the pale middle takes the body colour.
+		// Text colour for cell labels. Dark cells get light text.
 		const deepInk = dark ? '#101214' : '#ffffff';
 		const midInk = token(fig, '--text-primary');
 		const inkFor = (s: number) =>
@@ -110,9 +103,8 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 		for (let e = -Math.log2(CLAMP); e <= Math.log2(CLAMP); e++) ticks.push(2 ** e);
 
 		const narrow = root.clientWidth < 760;
-		// Six facets sharing the column width put five four-digit tick labels in
-		// about 120px each, which ran them together. Size the plot to what the
-		// facets need and let the figure scroll; .fig-chart has overflow-x.
+		// Size the plot to the facets and let the figure scroll, otherwise the
+		// tick labels run together at column width.
 		const perFacet = 205;
 		const wide = 58 + 24 + perFacet * Math.max(gpus.length, 1);
 		const width = narrow
@@ -149,7 +141,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 				legend: true,
 				ticks,
 				tickFormat: (v: number) => `${v < 1 ? fmtRatio(v) : String(v)}x`,
-				label: `speedup over forced SDPA-flash (colour clamped at ${CLAMP}x; hover for the exact ratio)`,
+				label: `speedup over SDPA-flash (colour capped at ${CLAMP}x, hover for exact value)`,
 			},
 			marks: [
 				Plot.frame({ stroke: 'var(--border)', strokeWidth: 0.6 }),
@@ -162,7 +154,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 					title: (d: Row) =>
 						`${d.impl} on ${panelOf(d.gpu)}\n` +
 						`B=${d.B}, N=${d.N}\n` +
-						`${fmtRatio(d.speedup)}x the forced SDPA-flash baseline\n` +
+						`${fmtRatio(d.speedup)}x the SDPA-flash speed\n` +
 						`${fmtUs(d.us)} us against ${fmtUs(d.base_us)} us baseline`,
 					tip: true,
 				}),
@@ -220,8 +212,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 			draw();
 			select.addEventListener('change', draw);
 
-			// Fill colours are read from the tokens as literals, so a theme flip has
-			// to redraw. Plot's own var() styling follows the theme without help.
+			// Fill colours are literal values, so redraw when the theme changes.
 			matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
 
 			let w = plotEl.clientWidth;
@@ -234,8 +225,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 		});
 	}
 
-	// The figure fetches and draws itself the first time it scrolls into view, so
-	// no hydration directive is needed on the tag.
+	// Load and draw the first time the figure scrolls into view.
 	const seen = new IntersectionObserver((entries) => {
 		for (const e of entries) {
 			if (!e.isIntersecting) continue;

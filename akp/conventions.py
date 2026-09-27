@@ -1,19 +1,14 @@
-"""Shared presentation conventions: colours, status meanings, key parsing.
+"""Shared presentation settings: colours, status labels and cell-key parsing.
 
-Nothing here defines a metric. analysis.py owns every number; this module only
-names and reshapes what it wrote, so the paper and the website cannot drift on
-which colour or which status label means what.
-
-cell_key() is the one function that touches data, and it parses rather than
-computes: analysis.py builds the composite key and this splits it back.
+No metrics are computed here. analysis.py produces the numbers, and this module
+keeps the paper and the website using the same colours and labels.
 """
 from __future__ import annotations
 
 import pandas as pd
 
-# Sixteen distinct colours because the prefill registry has ten implementations
-# and the decode registry six. An eight-slot palette wraps, which drew
-# P1-inductor-nofuse in P4-fa2's colour on any chart spanning the registry.
+# One colour per implementation (ten prefill, six decode), so no two share a
+# colour on a chart that shows the whole registry.
 COLOURS = {
     "P0-naive": "#9e9e9e",
     "P1-inductor": "#c98a3a",
@@ -33,11 +28,9 @@ COLOURS = {
     "D6-fa-prefill-at-1": "#b0a04a",
 }
 
-# Status is not a severity scale: UNSUPPORTED means the implementation declined
-# a configuration it never claimed, OOM_PREDICTED means an allocation computed
-# in advance to exceed memory was not attempted, and OOM means one actually
-# failed. Pooling them into "failures" would read as a reliability problem
-# where most of it is a documented refusal.
+# The statuses mean different things and are kept apart. UNSUPPORTED is a
+# configuration the implementation does not support. OOM_PREDICTED was skipped
+# because it would not fit in memory. OOM ran and failed to allocate.
 STATUS_COLOURS = {
     "OK": "#2e9e5b",
     "UNSUPPORTED": "#9e9e9e",
@@ -51,7 +44,7 @@ STATUS_COLOURS = {
 STATUS_MEANING = {
     "OK": "measured",
     "UNSUPPORTED": "implementation declined this configuration by design",
-    "OOM_PREDICTED": "allocation computed in advance to exceed memory; not attempted",
+    "OOM_PREDICTED": "allocation computed in advance to exceed memory, not attempted",
     "OOM": "allocation attempted and failed",
     "NUMERICAL_FAIL": "ran, but failed the 2x-naive correctness gate",
     "ERROR": "raised at run time",

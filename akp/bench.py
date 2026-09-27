@@ -1,7 +1,7 @@
-"""Timing, device identification, and per-cell telemetry.
+"""Timing, device identification and per-cell telemetry.
 
-p5/p95 are descriptive spread only; the 5th percentile of 30 samples is too
-noisy to infer from. Confidence intervals come from the bootstrap in analysis.
+p5 and p95 describe spread only. With 30 samples they are too noisy for
+inference, so confidence intervals come from the bootstrap in analysis.py.
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ import triton.testing as tt
 
 def device_info(index: int = 0) -> dict:
     p = torch.cuda.get_device_properties(index)
-    # Theoretical peak: DDR transfers twice per clock, memory_clock_rate is kHz.
-    # Both attributes only exist from torch 2.10, so this is None on older
-    # builds and bandwidth utilisation falls back to the measured copy figure.
+    # Theoretical peak. DDR transfers twice per clock and memory_clock_rate is
+    # in kHz. Both attributes need torch 2.10 or later, so on older builds this
+    # is None and bandwidth utilisation uses the measured copy figure.
     clock = getattr(p, "memory_clock_rate", None)
     width = getattr(p, "memory_bus_width", None)
     peak_bw = (round(clock * 1e3 * 2 * (width / 8) / 1e9, 1)
@@ -46,8 +46,8 @@ _SMI_FIELDS = ("clocks.sm,clocks.max.sm,temperature.gpu,power.draw,"
 
 
 def telemetry() -> dict:
-    """SM clock, temperature, power, throttle reasons, so we can tell
-    afterwards whether an inversion was really a thermally limited host."""
+    """SM clock, temperature, power and throttle reasons, used to check
+    afterwards whether a result came from a thermally limited host."""
     if not shutil.which("nvidia-smi"):
         return {}
     try:
@@ -64,8 +64,8 @@ def telemetry() -> dict:
 
 
 def measured_peak_bw_gbs(device, mb: int = 512, reps: int = 20) -> float:
-    """Achievable bandwidth from a large copy, reported next to the
-    published peak so bw_util is measured rather than assumed."""
+    """Achievable bandwidth from a large device copy, used as the
+    denominator for bw_util."""
     n = mb * 1024 * 1024 // 2
     a = torch.empty(n, dtype=torch.float16, device=device)
     b = torch.empty_like(a)
@@ -86,8 +86,9 @@ def _flush_buffer(device):
 def event_overhead_us(device, reps: int = 50) -> float:
     """Cost of one cudaEventRecord pair around an empty region.
 
-    Recorded per device: it is how much per-iteration event timing would have
-    inflated a short decode kernel, and why block_bench times K at a time.
+    Recorded per device. It shows how much timing each call separately would
+    inflate a short decode kernel, which is why block_bench times K calls at
+    once.
     """
     s, e = torch.cuda.Event(True), torch.cuda.Event(True)
     ts = []
@@ -101,12 +102,12 @@ def block_bench(fn, device, reps: int = 30, warmup: int = 25,
                 target_us: float = 200.0, flush_l2: bool = False) -> dict:
     """K iterations per event pair, median over `reps` blocks.
 
-    K is sized so a block exceeds target_us, keeping the event pair under 1% of
-    the measurement even for a 5-15 us decode kernel.
+    K is chosen so a block lasts longer than target_us. That keeps the event
+    pair under 1% of the measurement even for a 5-15 us decode kernel.
 
-    flush_l2 is the cache condition and is reported, not assumed. Flushing
-    before every call measures cold cache; back-to-back serving is warm, and
-    reporting flushed numbers as serving latency overstates it.
+    flush_l2 zeroes a buffer larger than L2 before each block and is recorded
+    in the result. Back-to-back serving runs with a warm cache, so flushed
+    numbers overstate serving latency.
     """
     flush = _flush_buffer(device) if flush_l2 else None
     for _ in range(warmup):

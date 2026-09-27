@@ -1,14 +1,13 @@
-"""Sweep runner: grid -> per-cell measurement -> one JSON line per row.
+"""Sweep runner. Takes a grid, measures each cell and writes one JSON line per row.
 
-Built to survive being killed. Cluster pods get evicted, spot instances get
-outbid, and one CUDA OOM takes down a process:
+Pods can be evicted and a CUDA error can kill the process, so the runner is
+built to resume.
 
-  * rows are keyed by config_hash and skipped if already on disk, so a restart
-    picks up where it left off
-  * each row is appended and fsync'd, so a hard kill loses one cell
-  * impl order is shuffled per config, so clock and thermal drift is
-    common-mode across the impls being compared
-  * cells that cannot fit are recorded as OOM_PREDICTED, never attempted
+  * Rows are keyed by config_hash and skipped if already on disk, so a restart
+    continues where it stopped.
+  * Each row is appended and fsync'd, so a hard kill loses at most one cell.
+  * Implementation order is shuffled per config.
+  * Cells that cannot fit are recorded as OOM_PREDICTED and never attempted.
 """
 
 from __future__ import annotations
@@ -29,8 +28,7 @@ import torch
 from akp import bench, check
 from akp.impls import NAIVE_LIKE, Cfg, impls_for, naive_peak_bytes
 
-# Grids are plain Python: the skip rules are conditional and YAML would need a
-# second language to express them.
+# Grids are plain Python because the skip rules are conditional.
 
 def _prod(**axes):
     keys = list(axes)
@@ -56,17 +54,17 @@ def grid(name):
                                N=[256, 512, 1024, 2048, 4096, 8192],
                                dtype=["bf16", "fp16"], mode=["fwd", "fwd_bwd"])]
 
-    if name == "prefill_gqa":            # every deployed model is GQA
+    if name == "prefill_gqa":            # most deployed models use GQA
         return [Cfg("prefill", B=4, Hq=32, Hkv=8, D=128, N=a["N"],
                     dtype=a["dtype"])
                 for a in _prod(N=[512, 2048, 4096], dtype=["bf16", "fp16"])]
 
-    if name == "prefill_noncausal":      # causal and non-causal where supported
+    if name == "prefill_noncausal":
         return [Cfg("prefill", B=4, Hq=32, Hkv=32, D=128, N=a["N"],
                     dtype=a["dtype"], causal=False)
                 for a in _prod(N=[512, 2048, 4096], dtype=["bf16", "fp16"])]
 
-    if name == "prefill_cold":           # cold-cache condition, reported apart
+    if name == "prefill_cold":           # cold L2, reported separately
         return [Cfg("prefill", B=4, Hq=32, Hkv=32, D=128, N=n, cache="cold")
                 for n in (512, 2048, 4096)]
 
@@ -77,21 +75,21 @@ def grid(name):
                                N=[512, 1024, 2048, 4096, 8192, 16384],
                                dtype=["bf16", "fp16"])]
 
-    if name == "decode_cudagraph":       # only where launch overhead can matter
+    if name == "decode_cudagraph":       # small shapes, where launch overhead matters
         return [Cfg("decode", B=a["B"], Hq=32, Hkv=a["Hkv"], D=a["D"],
                     N=a["N"], dtype=a["dtype"], causal=False,
                     launch="cudagraph")
                 for a in _prod(B=[1, 8], Hkv=[32, 8], D=[64, 128],
                                N=[512, 1024, 2048], dtype=["bf16", "fp16"])]
 
-    if name == "decode_cold":            # cold-cache decode, reported apart
+    if name == "decode_cold":            # cold L2, reported separately
         return [Cfg("decode", B=b, Hq=32, Hkv=8, D=128, N=n, causal=False,
                     cache="cold")
                 for b in (1, 32) for n in (512, 8192)]
 
     if name == "profile":
-        # The cells worth explaining rather than a sample of the grid: where a
-        # ranking is likely to turn over, and where the bound changes.
+        # Cells picked for profiling: where rankings are likely to change and
+        # where the limiting resource changes.
         return [
             Cfg("prefill", B=4, Hq=32, Hkv=32, D=128, N=512),    # small, launch-sensitive
             Cfg("prefill", B=4, Hq=32, Hkv=32, D=128, N=2048),   # the reference prefill
@@ -110,14 +108,12 @@ def grid(name):
                      "decode_full decode_cudagraph decode_cold profile")
 
 
-# Compiled implementations run on strips rather than the full grid. Inductor
-# autotunes per shape and that dominates wall time, so the rule is: run it
-# everywhere only if the answer it gives varies with shape.
+# Compiled implementations run on a subset of the grid because Inductor
+# autotunes per shape and that dominates wall time.
 #
-#   D1-inductor         decode is bandwidth-bound, so its ranking is predictable
-#   P1-inductor-nofuse  these two exist to answer whether Inductor rewrites the
-#   P1-inductor-where   naive form into SDPA, which is a property of the spelling
-#                       and not of B or N
+#   D1-inductor         decode is bandwidth-bound, so a few shapes are enough
+#   P1-inductor-nofuse  these two check whether Inductor rewrites the naive
+#   P1-inductor-where   form into SDPA, which does not depend on B or N
 D1_STRIP = {(1, 128, 8), (32, 128, 8)}
 
 
@@ -136,9 +132,9 @@ def impl_applies(impl_name, cfg):
 # --------------------------------------------------------------------------- #
 
 def git_sha():
-    # Baked in at image build: /workspace is not a repo, so without this every
-    # cluster row shares one sha and a rebuilt image resumes onto stale rows
-    # rather than re-measuring them.
+    # Set at image build because /workspace is not a git repo. Without it all
+    # cluster rows would share one sha and a rebuilt image would resume onto
+    # stale rows.
     env = os.environ.get("AKP_GIT_SHA")
     if env:
         return env
@@ -180,10 +176,10 @@ def manifest(device):
 
 
 class DispatchTable:
-    """Intern kernel traces so rows carry a 16-char id instead of ~2 KB
-    of mangled C++ that repeats across every shape and repeat.
+    """Store each kernel trace once and give rows a 16-char id for it.
 
-    Traces live in results/dispatch.jsonl and are joined back in analysis.py.
+    A trace is about 2 KB of mangled C++ names that repeats across shapes and
+    repeats. Traces go to results/dispatch.jsonl and analysis.py joins them back.
     """
 
     def __init__(self, path):
@@ -221,33 +217,31 @@ def config_hash(cfg, impl, dev, sha, repeat):
 # --------------------------------------------------------------------------- #
 
 def oom_predicted_bytes(impl_name, cfg, dev_info):
-    """Bytes this cell would need, if that is more than the device has.
+    """Bytes this cell would need, or 0 if it fits in 85% of device memory.
 
-    Shared by the timed path and by prewarm. Prewarm used to skip the check
-    and call build().fn() directly, so it really did attempt the 450 GB
-    allocation at B=16 N=8192: the OOM is caught, but it leaves the allocator
-    wedged and the next Inductor autotune dies with an illegal memory access,
-    which poisons the context for everything after it.
+    Used by both the timed path and prewarm. Attempting the allocation (450 GB
+    at B=16 N=8192) leaves the allocator in a bad state even after the OOM is
+    caught, and the next Inductor autotune then fails with an illegal memory
+    access.
     """
     if impl_name not in NAIVE_LIKE:
         return 0
     need = naive_peak_bytes(cfg)
     return need if need > 0.85 * dev_info["total_memory_gb"] * 1e9 else 0
 
-GATED = set()   # one correctness gate per equivalence class, not per cell
+GATED = set()   # classes that already have a correctness verdict
 
-# A config is eligible to be its class's gate only if the unchunked naive
-# baseline fits well inside memory. 8 GB covers B=4 N=4096 and everything
-# smaller, which every class in every grid contains; decode has no score
-# matrix, so naive_peak_bytes is 0 there and every decode cell is eligible.
+# A config can gate its class only if the unchunked naive baseline fits well in
+# memory. 8 GB covers B=4 N=4096 and smaller, which every class in every grid
+# contains. Decode has no score matrix, so naive_peak_bytes is 0 there and
+# every decode cell qualifies.
 GATE_BUDGET_BYTES = 8e9
 
-SEEN_CLASSES = set()   # to report any class no cheap config gated
+SEEN_CLASSES = set()   # used to warn about classes that were never gated
 
-# After one of these the CUDA context is unusable and every later call fails or
-# returns garbage, so the rows a process would keep writing are worthless. The
-# shard is written and fsync'd per cell, so aborting here loses nothing: the
-# Job restarts the index and resume skips what is already on disk.
+# After one of these errors the CUDA context is unusable and later results are
+# garbage. Rows are fsync'd per cell, so aborting loses nothing. The Job
+# restarts the index and resume skips rows already on disk.
 STICKY_CUDA = ("illegal memory access", "unspecified launch failure",
                "device-side assert", "misaligned address",
                "CUDA error: an illegal instruction")
@@ -263,7 +257,6 @@ def run_cell(impl, cfg, device, dev_info, reps):
     if not impl.supports(cfg, dev_info) or not impl_applies(impl.name, cfg):
         return {**row, "status": "UNSUPPORTED"}
 
-    # Never attempt an allocation we can compute in advance will fail.
     need = oom_predicted_bytes(impl.name, cfg, dev_info)
     if need:
         return {**row, "status": "OOM_PREDICTED",
@@ -275,17 +268,11 @@ def run_cell(impl, cfg, device, dev_info, reps):
         out = built.fn()
         torch.cuda.synchronize()
 
-        # Correctness depends on (impl, D, dtype, causal, GQA, mode), not on
-        # batch or length, so gate one cell per class. The reference costs more
-        # than the measurement it guards.
+        # Correctness depends on (impl, D, dtype, causal, GQA, mode) and not
+        # on batch or length, so one cell per class is checked. The check waits
+        # for a small config of the class because the unchunked baseline
+        # cannot run at B=16 N=8192.
         cls = (impl.name, cfg.D, cfg.dtype, cfg.causal, cfg.gqa, cfg.mode)
-        # Gate on a cheap member of the class, not on whichever one came first.
-        # The baseline the gate compares against is an unchunked naive, so at
-        # B=16 N=8192 the gate would try the 450 GB allocation the impl itself
-        # is allowed to skip -- and since the class is marked gated either way,
-        # one unlucky ordering would leave it silently unverified forever.
-        # Correctness does not depend on B or N, so waiting for a small config
-        # of the same class costs nothing.
         if cls not in GATED and naive_peak_bytes(cfg) < GATE_BUDGET_BYTES:
             GATED.add(cls)
             row.update(check.gate(cfg, device, out,
@@ -308,7 +295,7 @@ def run_cell(impl, cfg, device, dev_info, reps):
     except NotImplementedError:
         row["status"] = "UNSUPPORTED"
     except RuntimeError as exc:
-        # "No available kernel" is backend coverage at this shape, not a crash.
+        # "No available kernel" means the backend does not cover this shape.
         msg = str(exc)
         row["status"] = ("UNSUPPORTED" if "No available kernel" in msg
                          or "not supported" in msg.lower() else "ERROR")
@@ -318,8 +305,8 @@ def run_cell(impl, cfg, device, dev_info, reps):
         row["error"] = (type(exc).__name__ + ": " + str(exc))[:400]
     finally:
         del built
-        # empty_cache itself raises once the context is poisoned; the status
-        # already recorded above is what matters, so do not lose it here.
+        # empty_cache raises once the context is broken. Keep the status
+        # recorded above.
         try:
             torch.cuda.empty_cache()
         except RuntimeError as exc:
@@ -339,7 +326,7 @@ def main(argv=None):
     ap.add_argument("--impl", default=None, help="restrict to one implementation")
     ap.add_argument("--out", default="results/raw")
     ap.add_argument("--repeat", type=int, default=0,
-                    help="process-level repeat index; part of the config hash")
+                    help="process-level repeat index, part of the config hash")
     ap.add_argument("--reps", type=int, default=30)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--require-gpu", default=None,
@@ -347,12 +334,12 @@ def main(argv=None):
                          "the cluster also has 40GB PCIe and MIG A100s and "
                          "silently benchmarking one would corrupt the anchor")
     ap.add_argument("--index", type=int, default=None,
-                    help="single task index; repeat and shard are derived as "
+                    help="single task index, repeat and shard are derived as "
                          "index // nshards and index %% nshards, so a k8s "
                          "Indexed Job needs no shell arithmetic")
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--nshards", type=int, default=1,
-                    help="split the grid across pods; each shard keeps every "
+                    help="split the grid across pods, each shard keeps every "
                          "implementation for its configs, so the interleaving "
                          "that makes drift common-mode is preserved")
     ap.add_argument("--prewarm", action="store_true",
@@ -379,8 +366,8 @@ def main(argv=None):
     envdir.mkdir(parents=True, exist_ok=True)
     (envdir / (slug + ".json")).write_text(json.dumps(manifest(device), indent=2))
 
-    # Beside the raw shards, not a fixed path: on a cluster the rows go to a
-    # mounted volume and a hardcoded path would leave the traces in the container.
+    # Next to the raw shards, so on a cluster the traces also land on the
+    # mounted volume.
     dispatch = DispatchTable(Path(a.out).parent / "dispatch.jsonl")
     shard = outdir / (a.grid + "_" + (a.impl or "all") + "_r" + str(a.repeat)
                       + "_s" + str(a.shard) + ".jsonl")
@@ -395,18 +382,17 @@ def main(argv=None):
         dev_info["gpu_name"], dev_info["cc_major"], dev_info["cc_minor"],
         a.grid, a.repeat, len(done)), flush=True)
 
-    # Shuffle before sharding. The grid is generated by itertools.product with
-    # mode and dtype innermost, so a plain i % nshards split would put every
-    # fwd config on one node and every fwd_bwd on another -- confounding two of
-    # the axes under study with node identity. The seed is fixed so the split is
-    # identical on a resumed pod.
+    # Shuffle before sharding. mode and dtype are the innermost product axes,
+    # so a plain i % nshards split would put all fwd configs on one node and
+    # all fwd_bwd on another. The fixed seed keeps the split the same when a
+    # pod resumes.
     cfgs = grid(a.grid)
     random.Random(20260218).shuffle(cfgs)
     cfgs = [c for i, c in enumerate(cfgs) if i % a.nshards == a.shard]
 
     if a.prewarm:
-        # Inductor autotune and FlashInfer JIT dominate wall time and are paid
-        # per shape. Doing them once here keeps them out of the timed repeats.
+        # Inductor autotune and FlashInfer JIT are paid per shape. Doing them
+        # here keeps them out of the timed repeats.
         for ci, cfg in enumerate(cfgs):
             for impl in impls_for(cfg.regime):
                 if not impl.supports(cfg, dev_info) or not impl_applies(impl.name, cfg):
@@ -439,8 +425,7 @@ def main(argv=None):
             if not pending:
                 continue
 
-            # Shuffled so clock and thermal drift is common-mode across the
-            # implementations being compared at this configuration.
+            # Random order so no implementation is always measured first.
             order = list(pending)
             rng.shuffle(order)
             for impl in order:
@@ -472,7 +457,7 @@ def main(argv=None):
                 if merged.get("fatal"):
                     raise SystemExit(
                         "[akp] aborting: {} left the CUDA context unusable on "
-                        "{} -- {}. {} rows are on disk; the restarted pod "
+                        "{} -- {}. {} rows are on disk, the restarted pod "
                         "resumes after them.".format(
                             impl.name, cfg.key(), merged.get("error", ""), n_new))
 
@@ -482,10 +467,9 @@ def main(argv=None):
 
     ungated = SEEN_CLASSES - GATED
     if ungated:
-        # Silent otherwise: rows carry gate_class either way, and
-        # analysis treats a class with no verdict as passing.
+        # Warn, because analysis treats a class with no verdict as passing.
         print("[akp] WARNING: {} class(es) ran without a correctness "
-              "gate; no config of theirs was cheap enough to gate on: "
+              "gate, no config of theirs was cheap enough to gate on: "
               "{}".format(len(ungated), sorted("|".join(str(x) for x in c)
                                                for c in ungated)[:5]))
     print("[akp] wrote {} rows to {}".format(n_new, shard))

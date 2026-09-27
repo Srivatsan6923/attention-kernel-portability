@@ -11,20 +11,15 @@
 
 .article-body {
 	grid-column: 2;
-	/* Explicit row: the aside is second in the DOM but first in the grid, and
-	   auto-placement never walks the cursor backwards, so without this the
-	   aside lands in row 2 underneath the article. */
+	/* The aside comes after the article in the DOM, so both need an explicit
+	   row or the aside drops below the article. */
 	grid-row: 1;
 	min-width: 0;
 }
 
-/* Figures stay inside the content column.
-   The previous rule centred on the column midpoint and then expanded to the
-   viewport width, but the column is not centred in the viewport: a 220px table
-   of contents sits to its right. The result was every wide figure shifted about
-   134px to the left and clipped at the screen edge, with the following text
-   appearing right-shifted by comparison. Wide content scrolls instead, which
-   .fig-chart already allows. */
+/* Wide figures stay inside the content column and scroll if needed. The column
+   is off-centre because of the table of contents, so breaking out to the
+   viewport width clips them. */
 .figure-wide {
 	width: 100%;
 	margin-left: 0;
@@ -37,11 +32,8 @@
 	height: auto;
 }
 
-/* The aside stretches the full height of the grid row, and the sticky element
-   is the list inside it. With align-self:start the aside was only as tall as
-   its own content, so the sticky box ran out of travel partway down a long
-   article and was left stranded near the bottom of the page. It needs
-   grid-row too — see .article-body. */
+/* The aside fills the whole grid row so the sticky list inside it can travel
+   the full length of the article. */
 .article-toc {
 	grid-column: 1;
 	grid-row: 1;

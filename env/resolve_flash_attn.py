@@ -1,9 +1,8 @@
 """Print the flash-attn wheel URL matching the torch in this image.
 
-The wheel a release publishes is keyed on the CUDA major, the torch minor, the
-cxx11 ABI flag torch was built with, and the interpreter version. Constructing
-that filename by hand is fragile - the version inside the name does not always
-match the release tag - so resolve it against the release instead.
+Wheel names depend on the CUDA major version, torch minor version, the cxx11
+ABI flag and the Python version. The version in the name does not always match
+the release tag, so this looks the file up in the release assets.
 """
 
 import json

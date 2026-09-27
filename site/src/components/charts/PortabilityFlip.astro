@@ -1,14 +1,7 @@
 ---
-// Figure: winner flip rate between GPU pairs, unrestricted against restricted.
-//
-// The restricted rate (flip_sep, over the n_sep cells where the bootstrap CI
-// and the practical threshold both separate the winner from second place) is
-// the honest headline, so it carries the accent; the unrestricted rate sits
-// beside it in grey. Every bar prints the cell count it was computed over,
-// because a flip rate without its denominator says nothing.
-//
-// Data is read at build time from public/data/web.json and handed to the
-// client script as JSON; nothing here is hardcoded except the >= 5 cutoff.
+// Winner change rate for each GPU pair, over all configurations (grey) and over
+// configurations with a separated winner (accent). Each bar shows how many
+// configurations it uses. Data comes from public/data/web.json at build time.
 
 import web from '../../../public/data/web.json';
 
@@ -36,10 +29,10 @@ const id = 'portability-flip';
 
 <div class="pflip" id={id}>
 	<div class="pflip-legend">
-		<span class="pflip-key"><i class="sw sw-all"></i>All cells, winner by median latency</span>
-		<span class="pflip-key"><i class="sw sw-sep"></i>Cells with a separated winner (bootstrap CI and {
+		<span class="pflip-key"><i class="sw sw-all"></i>All configurations</span>
+		<span class="pflip-key"><i class="sw sw-sep"></i>Configurations with a clear winner (at least {
 			((web.separation.practical_threshold - 1) * 100).toFixed(0)
-		}% practical threshold)</span>
+		}% ahead and outside the bootstrap interval)</span>
 	</div>
 
 	{
@@ -152,7 +145,7 @@ const id = 'portability-flip';
 			root.querySelector<HTMLElement>('[data-pflip-data]')!.textContent!
 		);
 		const all = panels.flatMap((p) => p.rows);
-		// One x domain across both panels, so prefill and decode are comparable.
+		// Share one x range across both panels so prefill and decode line up.
 		const top = Math.max(...all.map((d) => Math.max(d.flip, d.flip_sep)));
 
 		const draw = () => {
@@ -165,7 +158,7 @@ const id = 'portability-flip';
 				const host = root.querySelector<HTMLElement>(`[data-panel="${panel.regime}"]`)!;
 				const width = Math.max(520, host.clientWidth || 720);
 
-				// Two bars per pair: faceted rows keep the pair label on one line.
+				// Two bars per pair, with faceted rows so the pair label stays on one line.
 				const bars = panel.rows.flatMap((d) => [
 					{ pair: label(d), kind: 'all', value: d.flip, cells: d.n },
 					{ pair: label(d), kind: 'sep', value: d.flip_sep, cells: d.n_sep },
@@ -187,7 +180,7 @@ const id = 'portability-flip';
 					},
 					x: {
 						domain: [0, Math.min(100, top * 100 * 1.16)],
-						label: 'Winner flips between the two GPUs (% of cells)',
+						label: 'Winner changes between the two GPUs (% of configurations)',
 						labelAnchor: 'left',
 						labelOffset: 30,
 						ticks: 5,
@@ -234,8 +227,7 @@ const id = 'portability-flip';
 		window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', redraw);
 	}
 
-	// ponytail: no framework integration is installed, so the island defers
-	// itself instead of relying on client:visible.
+	// Draw once the figure is close to the viewport.
 	for (const root of document.querySelectorAll<HTMLElement>('.pflip')) {
 		const io = new IntersectionObserver((entries) => {
 			if (entries.some((e) => e.isIntersecting)) {

@@ -1,7 +1,7 @@
-"""Correctness reference, numerical gate, and dispatch probe.
+"""Correctness reference, numerical gate and dispatch probe.
 
-Both run once per cell before timing, and the pytest suite imports the same
-functions so the two cannot drift apart.
+The gate and the probe run once per cell before timing. The tests import the
+same functions.
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ def to_bhsd(out: torch.Tensor, cfg: Cfg, layout: str) -> torch.Tensor:
 # --------------------------------------------------------------------------- #
 
 def reference(cfg: Cfg, device, chunk: int = 256) -> torch.Tensor:
-    """fp32 reference, chunked over query blocks: O(chunk * N) memory.
+    """fp32 reference, chunked over query blocks so memory is O(chunk * N).
 
-    Unchunked this needs 34 GB at B=16, Hq=32, N=4096. Inputs come from the same
-    seed make_inputs uses, so impl and reference see identical tensors.
+    Unchunked it needs 34 GB at B=16, Hq=32, N=4096. It uses the same seed as
+    make_inputs, so the implementation and the reference see the same tensors.
     """
     t = make_inputs(cfg, device)
     q = t["q"].float()
@@ -64,8 +64,9 @@ def _naive_same_dtype(cfg: Cfg, device) -> torch.Tensor:
                            expand_kv(t["v"], cfg.gqa), m, cfg.scale)
 
 
-# Floor for the acceptance rule: without it, a cell where the naive baseline is
-# unusually accurate fails an impl whose error is ordinary for the precision.
+# Floor for the acceptance rule. Without it, a cell where the naive baseline is
+# unusually accurate would fail an implementation with normal error for the
+# dtype.
 TAU = {"fp16": 1e-2, "bf16": 4e-2}
 
 
@@ -86,7 +87,7 @@ def errors(out: torch.Tensor, ref: torch.Tensor) -> dict:
 def accept(err: float, baseline: float, dtype: str) -> dict:
     """E_cand <= max(2 * E_naive_same_dtype, tau[dtype]).
 
-    Both halves are recorded so it is visible which one decided the cell.
+    Both conditions are recorded to show which one decided the cell.
     """
     tau = TAU[dtype]
     return {"pass_relative": bool(err <= 2 * baseline),
@@ -109,14 +110,12 @@ def _grads(cfg: Cfg, device, dtype):
 def gate(cfg: Cfg, device, out: torch.Tensor, layout: str, fn=None) -> dict:
     """Compare against the reference and decide pass/fail.
 
-    Gradients are checked separately: a backward can be wrong in dK alone while
-    the forward output is perfect.
+    Gradients are checked separately, because a backward pass can be wrong in
+    dK alone while the forward output is correct.
     """
     ref = reference(cfg, device)
     e = errors(to_bhsd(out, cfg, layout), ref)
     baseline = errors(_naive_same_dtype(cfg, device), ref)["max_abs_err"]
-    # `+ 1e-6` so an exactly-zero baseline (rare, tiny shapes) cannot fail a
-    # bit-identical implementation.
     e["baseline_max_abs_err"] = baseline
     e.update(accept(e["max_abs_err"], baseline, cfg.dtype))
     if e["has_nonfinite"]:
@@ -147,9 +146,8 @@ def gate(cfg: Cfg, device, out: torch.Tensor, layout: str, fn=None) -> dict:
 def dispatch_probe(fn) -> str:
     """CUDA kernels one call actually launches.
 
-    Returns raw names and asserts nothing; classification lives in analysis.py
-    so a regex that misfires on another architecture costs a re-analysis rather
-    than a re-run.
+    Returns raw names and checks nothing. Classification happens in
+    analysis.py, so fixing a bad pattern only needs a re-analysis.
     """
     from torch.profiler import ProfilerActivity, profile
 
@@ -158,12 +156,11 @@ def dispatch_probe(fn) -> str:
     fn()
     torch.cuda.synchronize()
 
-    # Select by device type, not attributed time: a short fused kernel can
-    # report zero self-time and would look like it never dispatched.
+    # Select events by device type. A short fused kernel can report zero
+    # self-time, so filtering by time would drop it.
     # acc_events=True stops the profiler clearing events each cycle.
-    # CUPTI occasionally hands back an empty event set on the first profile in
-    # a process, and intermittently after that. Retry, and report the failure
-    # honestly rather than letting it read as "the wrong kernel ran".
+    # CUPTI sometimes returns no events, most often on the first profile in a
+    # process. Retry, and return a distinct marker if it never works.
     for _ in range(4):
         try:
             try:

@@ -1,28 +1,23 @@
-"""The main result ledger: one frozen output every surface must quote.
+"""The main result ledger. The paper, README and website all quote it.
 
-Every question the paper, README and website ask
-is answered here once, with its exact subset, its numerator and denominator,
-its interval, and its coverage. Numbers drifted between surfaces in this
-project because each recomputed its own; this exists so none of them do.
+Each headline number is computed once here, with its subset, numerator,
+denominator, interval and coverage.
 
     python paper/ledger.py                      # results/processed -> ledger.{json,md}
 
-Conventions this file fixes, all of them from the publication review:
+Conventions:
 
-  * Forward prefill and forward-plus-backward are different populations. The
-    inference question is forward-only; fwd_bwd is reported separately and
-    never pooled into a headline.
-  * The separation ratio is runner-up latency / fastest latency, and the
-    margin and the interval are applied to that same estimator.
-  * "Native set" is every backend a device ran. "Common set" is the
-    intersection of backends eligible on BOTH devices of a pair, recomputed
-    from scratch: winners and separation are re-derived after restricting, not
-    filtered afterwards. This is what controls for FA3 being H100-only and
-    FlashInfer being absent on the 5090.
-  * Transfer cost is the target-device latency of the SOURCE device's chosen
-    backend divided by the target's own best. Source choices unavailable on
-    the target are reported as a coverage fraction, never dropped and never
-    silently replaced by the target's oracle.
+  * Forward prefill and forward-plus-backward are separate populations. The
+    headline uses forward only and reports fwd_bwd separately.
+  * The separation ratio is runner-up latency divided by fastest latency. The
+    margin and the interval both apply to that ratio.
+  * "Native set" is every backend a device ran. "Common set" is the backends
+    eligible on both devices of a pair, with winners and separation recomputed
+    inside that set. This accounts for FA3 running only on H100 and FlashInfer
+    failing on the 5090.
+  * Transfer cost is the target's latency for the source device's chosen
+    backend divided by the target's best. Source choices that cannot run on
+    the target are counted as missing coverage and never replaced.
 """
 from __future__ import annotations
 
@@ -71,10 +66,8 @@ def build_index(cells, margin=PRACTICAL):
             continue
         w, ru = s.iloc[0], s.iloc[1]
         kw = dict(ids_a=ru.repeat_ids, ids_b=w.repeat_ids) if ids else {}
-        # ratio and interval from one population, and separation needs the
-        # lower bound above 1: the ratio is runner-up/fastest and so >= 1 by
-        # construction, which makes an upper bound below 1 a contradiction
-        # rather than evidence.
+        # The ratio and interval come from the same launches. The ratio is at
+        # least 1 by construction, so separation tests the lower bound.
         ratio, lo, _hi, n_launch = paired_ratio_ci(ru.samples, w.samples, **kw)
         rec[(g, c)] = dict(winner=w.implementation,
                            sep=separated(ratio, lo, margin),
@@ -131,11 +124,10 @@ def flips(rec, gpus, pred, both_separated=True):
 
 
 def transfer_cost(rec, gpus, pred, require_source_sep=True):
-    """Target latency of the source's pick / target's own best.
+    """Target latency of the source's pick divided by the target's best.
 
-    Unavailable source picks are counted, never dropped and never replaced by
-    the target's oracle, because doing either turns a coverage problem into a
-    flattering ratio.
+    Source picks that cannot run on the target are counted separately and
+    never replaced by the target's best.
     """
     costs, unavailable, total = [], 0, 0
     for a in gpus:
@@ -175,8 +167,7 @@ def main():
 
     rec = build_index(cells)
 
-    # Backends eligible per (device, regime): what a common-set restriction
-    # has to intersect over.
+    # Eligible backends per (device, regime), used for the common set.
     elig = {}
     for (g, c), r in rec.items():
         elig.setdefault((g, regime_of(c)), set()).update(r["lat"])
@@ -248,11 +239,10 @@ def main():
 
     # common-set: recompute winners over the intersection, per pair and regime
     def common_flip(pred, gset, label):
-        """Intersect the eligible backends per matched workload, not per regime.
+        """Intersect the eligible backends for each matched workload.
 
-        A backend can run somewhere in a regime on both devices and still be
-        absent from the particular cell being compared, so a regime-level
-        intersection does not restrict the comparison it claims to restrict.
+        A backend can run in a regime on both devices and still be missing
+        from the specific cell, so the intersection is done per cell.
         """
         out, excl, skipped = [], 0, 0
         by_cell = {}
@@ -321,10 +311,10 @@ def main():
             **{k: int(v) for k, v in sub.status.value_counts().items()})
 
     # ---------------------------------------------- backend availability
-    # Which comparisons are possible at all. "-" means the device never
-    # attempted that backend, "." that it attempted and produced no usable
-    # row, "Y" that it did. Runtime failure, absent support and a memory
-    # limit are counted separately because they are different facts.
+    # Which comparisons are possible. "-" means never attempted, "." means
+    # attempted with no usable row, and "Y" means at least one usable row.
+    # Runtime failures, unsupported configs and memory limits are counted
+    # separately.
     dev = {g: short(g) for g in gpus}
     order = sorted(dev.values())
     avail = []

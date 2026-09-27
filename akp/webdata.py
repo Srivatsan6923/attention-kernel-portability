@@ -1,11 +1,10 @@
-"""Aggregate results/processed into one compact JSON the report page embeds.
+"""Collect results/processed into the JSON file the website reads.
 
-    python -m akp.webdata results/processed results/figures/web.json
+    python -m akp.webdata results/processed site/public/data/web.json
 
-The page renders its charts from this file, so every number on the site comes
-from the same parquet analysis.py wrote. Nothing here defines a metric: it
-selects slices, rounds, and reshapes. Slices are chosen by coverage rather than
-hardcoded, and the chosen slice travels with the data so a caption can state it.
+Every number on the site comes from this file. The script only selects slices,
+rounds and reshapes, and defines no metrics of its own. Slices are picked by
+coverage, and the chosen slice is stored with the data so captions can name it.
 """
 import argparse
 import json
@@ -21,8 +20,7 @@ SHORT = {"NVIDIA A10": "A10", "NVIDIA A100-SXM4-80GB": "A100",
          "NVIDIA H100 80GB HBM3": "H100", "NVIDIA L40": "L40",
          "NVIDIA L40S": "L40S", "NVIDIA GeForce RTX 5090": "RTX 5090",
          "NVIDIA GeForce RTX 4090": "RTX 4090"}
-# Compute capability orders the devices everywhere on the page. Alphabetical
-# would put the Ada parts between the two Ampere ones and imply nothing.
+# Devices are ordered by compute capability everywhere on the page.
 CC_ORDER = ["A100", "A10", "L40", "L40S", "H100", "RTX 5090"]
 
 
@@ -43,9 +41,8 @@ def r3(x):
 def best_slice(df, keys):
     """The slice with the widest device and implementation coverage.
 
-    Picked from the data rather than hardcoded: which batch and head dim are
-    best covered changes as devices finish, and a caption that names the slice
-    has to name the one actually plotted.
+    Picked from the data so the caption always names the slice that was
+    actually plotted.
     """
     g = (df.groupby(keys)
            .agg(gpus=("gpu_name", "nunique"), impls=("implementation", "nunique"),
@@ -69,11 +66,9 @@ def series(df, slice_, value="median_us"):
 def winner_grid(df, axis_y="batch"):
     """Fastest implementation over (seq_len, batch) per GPU.
 
-    Aggregate repeats per (configuration, backend) first, then pick. Taking
-    idxmin over the raw rows selects the fastest single process launch, which
-    is a different quantity: a backend measured at [1, 100, 100] us beats one
-    at [10, 10, 10] on the minimum and loses on the median that every other
-    number here uses.
+    Repeats are reduced to a median per (configuration, backend) before the
+    winner is picked. Taking the minimum over raw rows would pick the fastest
+    single launch instead, which disagrees with the medians used elsewhere.
     """
     med = (df.groupby(["gpu_name", "seq_len", axis_y, "implementation"])
              .median_us.median().reset_index())
@@ -98,16 +93,14 @@ def main(argv=None):
     sel = json.load(open(os.path.join(P, "selector.json"), encoding="utf8"))
     audit = pd.read_parquet(os.path.join(P, "dispatch_audit.parquet"))
     ok = rows[rows.status == "OK"]
-    # Correctness-qualified rows: status alone is not eligibility, and the
-    # performance figures were reading `ok`.
+    # Only rows that passed the correctness check. Status OK alone is not enough.
     elig = usable(rows).copy()
     elig["regime"] = elig.cell.str.split("|").str[0]
     cells_all = per_cell_median(usable(rows))
     cells_all["regime"] = cells_all.cell.str.split("|").str[0]
     cells_all["mode"] = cells_all.cell.str.split("|").str[7]
-    # The inference population, matching the paper and the ledger: forward
-    # prefill and decode. Forward-plus-backward is a training workload and is
-    # reported separately, never pooled into a portability number.
+    # Forward prefill and decode, as in the paper and the ledger.
+    # Forward-plus-backward is a training workload and is kept separate.
     infer = (cells_all.regime == "decode") | (cells_all["mode"] == "fwd")
     cells = cells_all[infer].copy()
     cells_bwd = cells_all[~infer].copy()
@@ -116,9 +109,8 @@ def main(argv=None):
 
     # ---- devices ---------------------------------------------------------
     env = summ.get("environment", {})
-    # Planned launches per configuration, and how many survived the gates. L40
-    # was given three and its median cell keeps two; every other device kept
-    # five. A median, not a count: cells differ.
+    # Median number of usable process launches per configuration. L40 keeps
+    # two and every other device keeps five.
     reps_by_gpu = {}
     for g, sub in elig.groupby(elig.gpu_name.map(short)):
         reps_by_gpu[g] = int(sub.groupby(["cell", "implementation"])
@@ -133,10 +125,8 @@ def main(argv=None):
         "event_us": r3(m.get("event_overhead_us")),
         "reps": reps_by_gpu.get(short(g)),
     } for g, m in env.items() if short(g) in set(rows.gpu_name.map(short))]
-    # A manifest exists for every device a pod ever started on, including one
-    # that produced no rows. Listing it would claim a measurement we do not have.
-    # Resolve the ordering before sorting: a key that reads the list being
-    # sorted sees it half-permuted.
+    # Skip devices that have a manifest but no rows. The sort order is resolved
+    # before sorting because the key reads the list being sorted.
     _ord = order([x["gpu"] for x in out["devices"]])
     out["devices"].sort(key=lambda d: _ord.index(d["gpu"]))
     out["software"] = (list(env.values())[0].get("versions") if env else {}) or {}
@@ -176,13 +166,12 @@ def main(argv=None):
             rec["sep"] = separated(_ratio, lo)
         win.append(rec)
     W = pd.DataFrame(win)
-    # No pooled rate: the two regimes have different denominators and pooling
-    # them produced a headline that matched neither the paper nor either regime.
+    # The two regimes have different denominators, so they are never pooled.
     out["separation"] = {
         "by_regime": {reg: {"n": int(len(s)), "separated": r3(s.sep.mean()),
                             "median_ratio": r3(s.ratio.median())}
                       for reg, s in W.groupby("regime")},
-        "population": "forward prefill and decode; forward-plus-backward excluded",
+        "population": "forward prefill and decode, forward-plus-backward excluded",
         "practical_threshold": PRACTICAL}
 
     wmap = {(r.gpu, r.cell): (r.winner, r.sep) for r in W.itertuples()}
@@ -244,12 +233,9 @@ def main(argv=None):
     } for i, s in gate.groupby("implementation")]
 
     # ---- prefill ---------------------------------------------------------
-    # Correctness-qualified rows, forward only, warm cache, causal: the
-    # inference population. Every axis except sequence length is pinned, so a
-    # curve varies only the intended one.
-    # Head counts are part of the slice, not something series() may average
-    # over: the sweep contains Hkv=8 prefill cells alongside Hkv=32, and both
-    # were entering the same curve. launch is enforced, not just recorded.
+    # Passing rows, forward only, warm cache, causal. Every axis except
+    # sequence length is fixed, including head counts and launch mode, so each
+    # curve varies one thing.
     pre = elig[(elig.regime == "prefill") & (elig["mode"] == "fwd")
                & (elig.launch == "eager") & (elig.cache == "warm")
                & (elig.causal == True)                      # noqa: E712
@@ -295,9 +281,8 @@ def main(argv=None):
         dec[(dec.hkv == ds["hkv"]) & (dec.head_dim == ds["head_dim"])
             & (dec.dtype == ds["dtype"])])
 
-    # MHA vs GQA at the same shape: Hkv 32 against Hkv 8. Batch is part of the
-    # comparison slice, not something to average over: grouping without it
-    # pooled B=1 through B=64 into a single ratio.
+    # MHA against GQA at the same shape (Hkv 32 and Hkv 8). Batch is part of
+    # the slice so different batch sizes are not averaged together.
     mg_b = int(sorted(dec.batch.unique())[0])
     mg = dec[(dec.head_dim == ds["head_dim"]) & (dec.dtype == ds["dtype"])
              & (dec.batch == mg_b) & dec.hkv.isin([8, 32])]
@@ -309,9 +294,9 @@ def main(argv=None):
         "us": r3(s.median_us.median()), "kv_mb": r3(s.kv_bytes.median() / 1e6)}
         for (g, h, n, i), s in mg.groupby(["gpu_name", "hkv", "seq_len", "implementation"])]
 
-    # ---- roofline (analytic traffic; no profiler data exists) ------------
-    # Forward only: pooling the backward pass into an arithmetic-intensity
-    # median mixes two different amounts of work per byte.
+    # ---- roofline (analytic traffic, no profiler data) --------------------
+    # Forward only, since the backward pass does a different amount of work
+    # per byte.
     rf = elig[(elig["mode"] == "fwd") & elig.arith_intensity.notna()
               & elig.tflops.notna()] if "arith_intensity" in elig else elig.iloc[:0]
     out["roofline_population"] = "forward only, correctness-qualified rows"
@@ -334,8 +319,7 @@ def main(argv=None):
                          "coverage": r3(v.get("coverage"))}
                      for k, v in (sel.get("vs_fixed") or {}).items()}}
 
-    # Supplementary: the forward-plus-backward population, kept whole so the
-    # site can show it without any main figure drawing on it.
+    # Supplementary forward-plus-backward data, kept out of the main figures.
     wb = []
     for (g, c), sub in cells_bwd.groupby(["gpu_name", "cell"]):
         srt = sub.sort_values(["median_us", "implementation"])

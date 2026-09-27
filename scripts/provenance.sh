@@ -1,17 +1,13 @@
 #!/usr/bin/env sh
-# Which GPU architectures did each shipped binary actually get compiled for?
+# List the GPU architectures each installed library was compiled for.
 #
 #   docker run --rm <image> sh /workspace/scripts/provenance.sh
 #
-# Needs no GPU and no driver: cuobjdump reads the fat binary off disk. That is
-# the point -- the hypothesis is about what the wheels contain, so inspect the
-# wheels rather than infer it from timings.
+# Needs no GPU. cuobjdump reads the binaries from disk.
 #
-# Reading the output: SASS is compiled code for that exact architecture. PTX is
-# forward-compatible source the driver JITs at load. A cubin built for sm_80
-# also runs on sm_86 and sm_89 -- binary compatibility holds across a minor
-# version bump inside one major family -- so an absent sm_86 does not mean the
-# library fails there. It means the code running was tuned for a different part.
+# SASS is native code for that architecture. PTX is compiled by the driver at
+# load time. A cubin built for sm_80 also runs on sm_86 and sm_89, so a missing
+# sm_86 entry means the library runs code built for another GPU there.
 set -u
 
 probe() {
@@ -38,15 +34,14 @@ py "import flash_attn;print('# flash_attn', flash_attn.__version__)"
 py "import flashinfer;print('# flashinfer', flashinfer.__version__)"
 echo
 
-# find(1) rather than importing: flash_attn_2_cuda needs torch loaded first and
-# a driver present, neither of which this check should require.
+# Use find instead of importing, because importing flash_attn_2_cuda needs
+# torch and a GPU driver.
 probe flash-attn-2 "$(find / -name 'flash_attn_2_cuda*.so' 2>/dev/null | head -1)"
 probe flash-attn-3 "$(find / -path '*flash_attn_3*' -name '*.so' 2>/dev/null | head -1)"
 probe libtorch_cuda "$(py "import torch,os;print(os.path.join(os.path.dirname(torch.__file__),'lib','libtorch_cuda.so'))")"
 probe cudnn-engines "$(find / -name 'libcudnn_engines_precompiled*.so*' 2>/dev/null | head -1)"
 probe cublas "$(find / -name 'libcublas.so*' 2>/dev/null | head -1)"
 
-# FlashInfer JITs per shape at run time, so it ships no cubins to inspect; its
-# provenance is the JIT cache under FLASHINFER_WORKSPACE_BASE after a sweep.
+# FlashInfer compiles kernels at run time and ships no cubins.
 echo
 echo "# flashinfer JITs at run time and ships no cubins; see the JIT cache instead"

@@ -1,10 +1,9 @@
-// One colour per implementation family, identical in every chart. The hexes
-// match the --backend-* tokens in src/styles/tokens.css; charts drawn into SVG
-// need the literal value, so it lives here as well. Architecture is carried by
-// panel or line style, never by a second colour scale.
+// One colour per implementation family, shared by every chart. The values match
+// the --backend-* tokens in src/styles/tokens.css. SVG charts need the literal
+// hex, so it is repeated here.
 //
-// Every implementation id present in public/data/web.json is listed. An id that
-// is not in this map is a data change, not a default: colourOf throws.
+// Every implementation id in public/data/web.json must be listed. colourOf
+// throws on an unknown id so a new implementation cannot slip in uncoloured.
 
 export const BACKEND_COLOR = {
 	reference: '#9e9e9e',

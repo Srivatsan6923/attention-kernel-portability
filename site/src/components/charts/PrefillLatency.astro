@@ -1,7 +1,7 @@
 ---
-// Faceted prefill small-multiples: one panel per GPU, one line per
-// implementation. The metric switches between latency, achieved TFLOP/s and
-// peak memory. Every value is read from public/data/web.json at runtime.
+// Prefill chart with one panel per GPU and one line per implementation. The
+// select switches between latency, throughput and peak memory. All values come
+// from public/data/web.json at runtime.
 interface Props {
 	id?: string;
 }
@@ -28,7 +28,7 @@ const { id = 'fig-prefill-latency' } = Astro.props;
 <script>
 	import * as Plot from '@observablehq/plot';
 
-	// Fixed backend identity: the same seven colours in every chart on the site.
+	// The same seven family colours as every other chart.
 	const FAMILY: [RegExp, string, string][] = [
 		[/^P1-inductor|^D1-inductor/, '#7e57c2', 'TorchInductor'],
 		[/^P2[bcd]?-sdpa|^D2-sdpa/, '#1769aa', 'SDPA'],
@@ -38,7 +38,7 @@ const { id = 'fig-prefill-latency' } = Astro.props;
 		[/^D4-flashinfer/, '#2e9e5b', 'FlashInfer'],
 		[/./, '#9e9e9e', 'PyTorch reference'],
 	];
-	// Variants inside one family keep the colour and separate by dash pattern.
+	// Variants in one family share a colour and differ by dash pattern.
 	const DASH = ['', '5,3', '1.5,2.5', '7,3,1.5,3'];
 
 	const METRICS = {
@@ -92,16 +92,15 @@ const { id = 'fig-prefill-latency' } = Astro.props;
 				if (!s) continue;
 				s.x.forEach((x: number, k: number) => {
 					const y = s.y[k];
-					// A log axis carries neither a zero nor a missing point.
+					// A log axis cannot show zero or missing points.
 					if (y != null && (spec.type === 'linear' || y > 0)) rows.push({ gpu, impl, x, y });
 				});
 			}
 		}
 
 		const narrow = root.clientWidth < 760;
-		// Six facets sharing the column width put five four-digit tick labels in
-		// about 120px each, which ran them together. Size the plot to what the
-		// facets need and let the figure scroll; .fig-chart has overflow-x.
+		// Size the plot to the facets and let the figure scroll, otherwise the
+		// tick labels run together at column width.
 		const perFacet = 165;
 		const wide = 58 + 24 + perFacet * Math.max(gpus.length, 1);
 		const width = narrow
@@ -205,8 +204,7 @@ const { id = 'fig-prefill-latency' } = Astro.props;
 		});
 	}
 
-	// The figure fetches and draws itself the first time it scrolls into view, so
-	// no hydration directive is needed on the tag.
+	// Load and draw the first time the figure scrolls into view.
 	const seen = new IntersectionObserver((entries) => {
 		for (const e of entries) {
 			if (!e.isIntersecting) continue;

@@ -14,14 +14,11 @@
 \usepackage{booktabs}
 \usepackage{multirow}
 
-% The released figure PDFs are the ones the website serves, and they are
-% tracked; results/figures/ is regenerated output and is not.
+% The figures are the PDFs the website also serves.
 \graphicspath{{../site/public/figures/}}
 
-% Both figures are wide floats. At LaTeX's defaults they do not clear
-% \floatpagefraction and are deferred past the bibliography. Letting a float
-% page be mostly float keeps them in the body, beside the text that refers to
-% them.
+% Both figures are wide floats. With LaTeX's defaults they move past the
+% bibliography, so allow float pages that are mostly float.
 \renewcommand{\topfraction}{0.92}
 \renewcommand{\textfraction}{0.07}
 \renewcommand{\floatpagefraction}{0.72}

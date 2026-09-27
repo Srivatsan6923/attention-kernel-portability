@@ -2,11 +2,9 @@
 
     python -m akp.preflight --require-gpu A100-SXM4-80GB
 
-Every check either asks the driver a question or drives the same code the sweep
-drives -- impls.build, check.gate, check.dispatch_probe, bench.block_bench.
-Nothing here is a second implementation of a sweep component: a reimplemented
-check can pass while the real one is broken, which is the failure mode a
-preflight exists to prevent.
+Each check either queries nvidia-smi or calls the same code the sweep uses
+(impls.build, check.gate, check.dispatch_probe, bench.block_bench). Nothing is
+reimplemented here, because a copy could pass while the real code is broken.
 
 Exit status is 0 on PASS and 1 on FAIL, so a Job can gate on it.
 """
@@ -26,12 +24,12 @@ import torch
 from akp import bench, check, run
 from akp.impls import IMPLS, Cfg, naive_peak_bytes
 
-# Erratic throttles, as in analysis.usable: hardware and thermal slowdowns.
-# SwPowerCap is the steady state of a loaded datacenter part, not a fault.
+# Hardware and thermal throttle bits, as in analysis.usable. SwPowerCap is
+# left out because loaded datacenter GPUs sit there normally.
 ERRATIC_THROTTLE = 0xF8
 
-# Shapes small enough to be quick and large enough to be real: N >= 128 because
-# the Triton tutorial autotunes BLOCK_M up to 128 and writes past a shorter row.
+# Small, quick shapes. N >= 128 because the Triton tutorial autotunes BLOCK_M
+# up to 128 and writes past the end of shorter sequences.
 PREFILL = Cfg("prefill", B=1, Hq=8, Hkv=8, D=64, N=256)
 PREFILL_BWD = Cfg("prefill", B=1, Hq=8, Hkv=8, D=64, N=256, mode="fwd_bwd")
 DECODE = Cfg("decode", B=2, Hq=8, Hkv=2, D=64, N=512, causal=False)
@@ -50,7 +48,7 @@ def _smi(fields: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
-# Gate 0: authorization and resource scope
+# GPU identity and exclusive access
 # --------------------------------------------------------------------------- #
 
 def check_identity(ctx):
@@ -62,7 +60,7 @@ def check_identity(ctx):
     if want and want not in got:
         return "FAIL", f"requested {want!r}, got {detail}"
     if torch.cuda.device_count() != 1:
-        return "WARN", f"{torch.cuda.device_count()} visible GPUs; using 0. {detail}"
+        return "WARN", f"{torch.cuda.device_count()} visible GPUs, using 0. {detail}"
     return "PASS", detail
 
 
@@ -76,11 +74,10 @@ def check_mig(ctx):
 
 
 def check_exclusive(ctx):
-    """Someone else's kernels on our SMs would land in our medians.
+    """Fail if another process is using the GPU.
 
     In a container nvidia-smi usually cannot see other namespaces' PIDs, so the
-    load-bearing signal is device memory in use that our own process did not
-    reserve.
+    check looks at device memory in use beyond what this process reserved.
     """
     v = _smi("memory.used")
     if not v:
@@ -115,7 +112,7 @@ def check_idle(ctx):
 
 
 # --------------------------------------------------------------------------- #
-# Gate 1: environment manifest
+# Environment manifest
 # --------------------------------------------------------------------------- #
 
 def check_manifest(ctx):
@@ -154,7 +151,7 @@ def check_ecc(ctx):
 
 
 # --------------------------------------------------------------------------- #
-# Gate 2/3: capability and per-implementation smoke
+# Capability and per-implementation smoke tests
 # --------------------------------------------------------------------------- #
 
 def check_capability(ctx):
@@ -169,13 +166,11 @@ def check_capability(ctx):
 
 
 def _impl_smoke(name, impl, cfg, device, dev):
-    """Build, run, gate numerics and probe dispatch -- run_cell's own order.
+    """Build, run, check numerics and probe dispatch, in run_cell's order.
 
-    The gate goes before the probe because that is what the sweep does, and the
-    order turns out to matter: sixteen probes fired back to back finish faster
-    than CUPTI flushes its buffers, and most come back empty. In the sweep an
-    fp32 reference and a full timing block sit between consecutive probes, and
-    coverage there is 1450 of 1450 rows on this same device.
+    The order matters. Sixteen probes run back to back finish before CUPTI
+    flushes its buffers, and most come back empty. Running the correctness
+    check first gives CUPTI time, as it does in the sweep.
     """
     if not impl.supports(cfg, dev) or not run.impl_applies(name, cfg):
         return "SKIP", "unsupported at the probe shape"
@@ -192,9 +187,8 @@ def _impl_smoke(name, impl, cfg, device, dev):
                             f"2x naive {2 * g['baseline_max_abs_err']:.3e}")
         trace = check.dispatch_probe(built.fn)
         if trace.startswith("<"):
-            # Not FAIL: the kernel ran and was numerically right, so this is
-            # the profiler being unavailable rather than the backend being
-            # wrong. run.py records the same string and analysis counts it.
+            # WARN because the kernel ran and was correct. The profiler is
+            # unavailable. run.py records the same string and analysis counts it.
             return "WARN", f"correct, but no dispatch trace: {trace}"
         return "PASS", (f"err {g['max_abs_err']:.2e} | "
                         f"{trace.count('|') + 1} kernel(s)")
@@ -202,10 +196,9 @@ def _impl_smoke(name, impl, cfg, device, dev):
         return "FAIL", f"{type(exc).__name__}: {exc}"[:160]
     finally:
         del built
-        # An illegal memory access poisons the context, and then empty_cache
-        # raises too -- from a finally, which discards the return above and
-        # propagates instead. That loses the one thing worth knowing: which
-        # implementation faulted.
+        # After an illegal memory access empty_cache also raises. Raising from
+        # finally would discard the return value that names the failing
+        # implementation, so swallow it.
         try:
             torch.cuda.empty_cache()
         except Exception:
@@ -213,10 +206,9 @@ def _impl_smoke(name, impl, cfg, device, dev):
 
 
 def check_impls(ctx):
-    """Every implementation imports, runs, dispatches and is numerically right.
+    """Check that every implementation imports, runs, dispatches and is correct.
 
-    Reported per implementation, because "one backend is broken here" is a
-    result worth seeing before the sweep rather than a hole discovered after.
+    Reported per implementation so a broken backend shows up before the sweep.
     """
     device, dev = ctx["device"], ctx["dev"]
     rows, bad, blind = [], [], []
@@ -230,8 +222,8 @@ def check_impls(ctx):
         rows.append(f"    {name:22s} {st:5s} {detail}")
         if st == "FAIL":
             bad.append(name)
-            # Everything after an illegal access fails identically, which
-            # buries the one implementation that actually broke.
+            # After an illegal access every later call fails the same way,
+            # so stop and report the implementation that caused it.
             if run._is_sticky(detail):
                 poisoned = True
                 rows.append(f"    -> {name} poisoned the context; "
@@ -243,8 +235,8 @@ def check_impls(ctx):
     if bad:
         return "FAIL", f"{len(bad)} implementation(s) failed: {bad}"
     if blind and traced == 0:
-        # Dispatch verification is a headline result of the study, so a host
-        # where the profiler never returns anything cannot produce it.
+        # The study needs dispatch traces, so a host where the profiler
+        # returns nothing is not usable.
         return "FAIL", f"no implementation produced a dispatch trace: {blind}"
     if blind:
         return "WARN", f"{len(blind)} correct but unprofiled: {blind}"
@@ -252,7 +244,7 @@ def check_impls(ctx):
 
 
 def check_backward(ctx):
-    """A backward path can be wrong in dK alone while the forward is perfect."""
+    """Check backward separately, since dK can be wrong while the forward is right."""
     device, dev = ctx["device"], ctx["dev"]
     bad = []
     for name, impl in IMPLS.items():
@@ -267,15 +259,14 @@ def check_backward(ctx):
 
 
 # --------------------------------------------------------------------------- #
-# Gate 9/14: predictors and the timer itself
+# OOM predictor, timer and writer
 # --------------------------------------------------------------------------- #
 
 def check_oom_predictor(ctx):
-    """The predictor must bound the real allocation, or it is not a guard.
+    """Check that the OOM predictor overestimates the real allocation.
 
-    Probed at N=2048, not at the small shapes above: the caching allocator also
-    holds a fixed cuBLAS workspace of order 10-20 MB, which swamps a 256-token
-    score matrix and is noise against the 68 GB cell the guard exists to refuse.
+    Run at N=2048 because the allocator also holds a 10-20 MB cuBLAS workspace,
+    which would dominate a 256-token score matrix.
     """
     device = ctx["device"]
     cfg = Cfg("prefill", B=1, Hq=8, Hkv=8, D=64, N=2048)
@@ -296,11 +287,10 @@ def check_oom_predictor(ctx):
 
 
 def check_timer(ctx):
-    """Doubling the work must double the measurement.
+    """Check that doubling the work doubles the measured time.
 
-    This is the one check that catches a harness measuring nothing: an
-    unsynchronized timer, a no-op region, or events created inside the timed
-    block all return a number that looks plausible and does not scale.
+    An unsynchronized timer, a no-op region or events created inside the timed
+    block all give plausible numbers that do not scale with work.
     """
     device = ctx["device"]
     a = torch.randn(2048, 2048, device=device, dtype=torch.float16)
@@ -312,18 +302,11 @@ def check_timer(ctx):
                 a @ b
         return f
 
-    # 4x against 2x, not 2x against 1x: both arms sit well above any fixed
-    # per-block cost, so the ratio tests linearity rather than the size of the
-    # intercept. Interleaved for the same reason the sweep interleaves
-    # implementations (6.2) -- measured back to back, clock drift lands on
-    # whichever ran second and reads as non-linearity.
-    # Warm up for a fixed duration, not a fixed count. An A100 idles around
-    # 1155 of 1410 MHz and ramps under load; 200 iterations is ~40 ms, which
-    # is not enough for that to settle. The bias always falls on the shorter
-    # arm -- it runs more of itself at a lower clock -- so an unsettled clock
-    # reads as sub-linear scaling and fails a perfectly good host. Two A100
-    # nodes scored 1.69 this way while an L40, already pinned at its max
-    # clock, scored 1.96.
+    # Compare 4x with 2x so both are well above any fixed per-block cost.
+    # The two are interleaved so clock drift does not fall on one of them.
+    # Warm up for a fixed time. An A100 idles around 1155 of 1410 MHz and needs
+    # more than 200 iterations (about 40 ms) to ramp up. An unsettled clock
+    # slows the shorter arm more and makes a good host look sub-linear.
     settle = time.time() + 1.0
     while time.time() < settle:
         work(8)()
@@ -336,10 +319,8 @@ def check_timer(ctx):
     t2, t4 = sorted(two)[1], sorted(four)[1]
     ratio = t4 / t2
     detail = f"2x={t2:.1f}us 4x={t4:.1f}us ratio={ratio:.2f}"
-    # 1.75 rather than 1.8: a warm A100 measured 1.81, and a gate that a good
-    # host clears by 0.01 fails honest hosts on noise. The failure this has to
-    # catch -- a timer measuring nothing, an unsynchronized region, events made
-    # inside the timed block -- lands nowhere near 1.75, it lands near 1.0.
+    # A warm A100 measured 1.81, so 1.8 would fail good hosts on noise. A
+    # broken timer gives a ratio near 1.0.
     if not 1.75 <= ratio <= 2.25:
         return "FAIL", f"work does not scale linearly with time: {detail}"
 
@@ -350,7 +331,7 @@ def check_timer(ctx):
 
 
 def check_writer(ctx):
-    """A row must survive the write path and come back with its keys."""
+    """Write a row the way run.py does and read it back."""
     required = ("implementation", "status", "median_us", "gpu_name",
                 "config_hash", "git_sha")
     with tempfile.TemporaryDirectory() as tmp:

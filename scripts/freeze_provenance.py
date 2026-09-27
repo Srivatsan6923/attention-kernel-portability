@@ -1,15 +1,8 @@
 """Recover per-run provenance from the rows themselves.
 
-`results/environment/<gpu>.json` holds ONE manifest per device, rewritten by
-whichever run touched that device last. That is lossy in exactly the way that
-matters: A10 and A100 decode were recorded at a different harness commit from
-their own prefill, and the surviving manifest names only the later one. Reading
-the manifest and concluding "every device ran at one commit" is a mistake this
-project actually made.
-
-Every row carries its own git_sha, timestamp, timer and telemetry, so the run
-structure can be rebuilt from the data rather than trusted from a file that got
-overwritten. This writes that table.
+`results/environment/<gpu>.json` keeps one manifest per device, overwritten by
+the last run on that device. Each row carries its own git_sha, timestamp and
+timer, so this rebuilds the per-run table from the rows instead.
 
     python scripts/freeze_provenance.py results_live/raw
 
@@ -47,8 +40,7 @@ def main(argv=None):
 
     rows = pd.read_parquet(os.path.join(a.processed, "rows.parquet"))
 
-    # Driver lives only in the manifests. Keep it, but keep it clearly labelled
-    # as last-writer-wins rather than as a property of each run.
+    # The driver is only in the manifests, which the last run overwrites.
     envdir = os.path.join(os.path.dirname(a.raw.rstrip("/\\")), "environment")
     drivers = {}
     for f in glob.glob(os.path.join(envdir, "*.json")):
@@ -70,8 +62,7 @@ def main(argv=None):
     g.to_csv(out, index=False)
     print("wrote %s (%d runs)" % (out, len(g)))
 
-    # The headline the manifest hides: which (device, regime) pairs disagree on
-    # commit, and which devices are internally split.
+    # Report (device, regime) pairs that span more than one commit.
     per = g.groupby(["gpu_name", "regime"]).git_sha.nunique()
     split_within = per[per > 1]
     by_regime = g.groupby("regime").git_sha.unique()
@@ -90,7 +81,7 @@ def main(argv=None):
         sub = g[g.gpu_name == dev].groupby("regime").git_sha.first()
         print("  %-24s %s" % (dev, dict((k, v[:8]) for k, v in sub.items())))
 
-    # Checksums over the frozen inputs, so a later release can prove identity.
+    # Checksums of the raw inputs.
     man = []
     for f in sorted(glob.glob(os.path.join(a.raw, "*", "*.jsonl"))):
         man.append({"path": os.path.relpath(f, ROOT).replace("\\", "/"),

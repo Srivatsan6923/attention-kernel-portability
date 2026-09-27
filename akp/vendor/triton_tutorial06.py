@@ -2,14 +2,12 @@
 Fused Attention
 ===============
 
-VENDORED FROM Triton `python/tutorials/06-fused-attention.py` (triton 3.6),
-with ONE local change: upstream hardcodes the in-kernel cast to `tl.float16`,
-so it cannot compile for bfloat16 at any shape.  We derive the cast dtype from
-the inputs instead (a `BF16` constexpr in the forward, where the dtype is
-needed before any tensor is loaded, and `v.dtype` in the backward).  Tiling,
-scheduling, and autotune configs are untouched.  The upstream fp16-only
-limitation is reported as a result; the patch keeps it from masquerading as
-"Triton is slow at bf16".
+Vendored from Triton `python/tutorials/06-fused-attention.py` (triton 3.6)
+with one local change. Upstream hardcodes the in-kernel cast to `tl.float16`,
+so it cannot compile for bfloat16. Here the cast dtype comes from the inputs,
+through a `BF16` constexpr in the forward (the dtype is needed before any
+tensor is loaded) and `v.dtype` in the backward. Tiling, scheduling and
+autotune configs are unchanged.
 
 This is a Triton implementation of the Flash Attention v2 algorithm from Tri Dao (https://tridao.me/publications/flash2/flash2.pdf)
 

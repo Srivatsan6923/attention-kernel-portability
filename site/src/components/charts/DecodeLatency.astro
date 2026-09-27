@@ -1,13 +1,10 @@
 ---
-// Faceted decode chart: one panel per GPU, two selects (batch, metric).
-// Everything is derived from public/data/web.json at runtime; no number is
-// written into this file. Colours come from src/lib/backends.ts, which mirrors
-// the --backend-* tokens.
+// Decode chart with one panel per GPU and selects for batch and metric. All
+// values come from public/data/web.json at runtime. Colours come from
+// src/lib/backends.ts.
 //
-// ponytail: one Plot per GPU instead of Plot's own facets, because the panels
-// need independent y domains (A10 peaks near 483 GB/s, H100 near 2980, and a
-// shared axis flattens the small device). Swap to fx-facets if the devices ever
-// land in the same range.
+// Each GPU gets its own Plot instead of using Plot facets, because the panels
+// need separate y ranges (A10 tops out near 483 GB/s and H100 near 2980).
 const uid = 'decode-latency';
 ---
 
@@ -167,7 +164,7 @@ const uid = 'decode-latency';
 			const metric = metricSel.value;
 			const isBw = metric === 'bw';
 			const byGpu = seriesFor(batch, metric);
-			// Device order follows devices[]; only GPUs with decode rows appear.
+			// Keep the devices[] order and show only GPUs with decode rows.
 			const gpus = data.devices.map((d: any) => d.gpu).filter((g: string) => g in byGpu);
 			const peak: Record<string, number> = Object.fromEntries(
 				data.devices.map((d: any) => [d.gpu, d.bw_gbs]),
@@ -197,7 +194,7 @@ const uid = 'decode-latency';
 
 			note.hidden = !isBw;
 			note.textContent = isBw
-				? 'The dashed rule in each panel is that device’s measured copy bandwidth from devices[].bw_gbs. Effective KV bandwidth is the analytic KV slice size divided by the measured step time, so a point above the rule means part of the slice was served from cache, not that the kernel exceeded the hardware.'
+				? 'The dashed line in each panel is that GPU’s measured copy bandwidth. Effective KV bandwidth is the modelled KV size divided by step time. A point above the line means part of the cache was served from L2.'
 				: '';
 		}
 
@@ -299,8 +296,7 @@ const uid = 'decode-latency';
 				if (status) status.textContent = `Could not load web.json (${err.message}).`;
 			});
 
-		// Fetch and draw only once the figure is near the viewport. This is an
-		// Astro component, so it carries its own laziness instead of client:visible.
+		// Load and draw once the figure is close to the viewport.
 		const io = new IntersectionObserver(
 			(entries) => {
 				if (!entries.some((e) => e.isIntersecting)) return;

@@ -1,4 +1,4 @@
-# These run inside Linux containers; CRLF breaks shebangs and heredocs.
+# These run inside Linux containers, where CRLF line endings break them.
 *.sh        text eol=lf
 Dockerfile  text eol=lf
 *.yaml      text eol=lf

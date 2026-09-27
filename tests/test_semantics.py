@@ -1,9 +1,8 @@
-"""Semantic checks for the bugs that stay silent and still produce
-plausible numbers.
+"""Tests for bugs that do not crash and still produce plausible numbers.
 
-A causal-alignment or GQA-mapping error does not crash and does not look wrong
-in a plot, it just invalidates every number. Some tests below assert that two
-APIs disagree, because a test that passes trivially would not catch the trap.
+A causal-alignment or GQA-mapping error does not show up in a plot but makes
+every number wrong. Some tests assert that two APIs disagree, so they fail if
+a library changes its convention.
 """
 
 from __future__ import annotations
@@ -30,10 +29,10 @@ def dev_info():
 
 @pytest.mark.skipif(not has("flash_attn"), reason="flash-attn not installed")
 def test_fa_and_sdpa_causal_disagree_when_qlen_ne_kvlen():
-    """FA >= 2.1 is bottom-right aligned, SDPA is_causal is top-left.
+    """FA >= 2.1 aligns causal bottom-right and SDPA is_causal top-left.
 
-    At q_len=2, kv_len=5 they compute different math. If they ever agree, a
-    library changed convention and every decode call needs re-deriving.
+    At q_len=2, kv_len=5 they compute different results. If they ever agree, a
+    library changed its convention and the decode calls need checking.
     """
     import torch.nn.functional as F
     from flash_attn import flash_attn_func
@@ -50,14 +49,14 @@ def test_fa_and_sdpa_causal_disagree_when_qlen_ne_kvlen():
 
     assert not torch.allclose(fa.float(), sd.float(), atol=1e-2), (
         "flash-attn and SDPA agreed on causal at q_len != kv_len -- a "
-        "convention changed upstream; re-derive the decode call for every impl")
+        "convention changed upstream, re-derive the decode call for every impl")
 
 
 def test_decode_query_attends_to_every_cached_key():
     """Decode is one query over all N keys.
 
-    Top-left causal at q_len=1 keeps exactly one key; asserting the reference
-    differs from that degenerate case is what pins the convention.
+    Top-left causal at q_len=1 keeps only one key, so the reference must differ
+    from that case.
     """
     cfg = Cfg("decode", B=1, Hq=2, Hkv=2, D=64, N=8, causal=False)
     ref = check.reference(cfg, DEV)
@@ -72,7 +71,7 @@ def test_decode_query_attends_to_every_cached_key():
 
 
 def test_prefill_reference_is_lower_triangular():
-    """At q_len == kv_len both conventions coincide; verify against a mask."""
+    """At q_len == kv_len both conventions coincide, verify against a mask."""
     cfg = Cfg("prefill", B=1, Hq=1, Hkv=1, D=32, N=8)
     t = make_inputs(cfg, DEV)
     q, k, v = (x.float() for x in (t["q"], t["k"], t["v"]))
@@ -89,12 +88,13 @@ def test_prefill_reference_is_lower_triangular():
 def test_gqa_uses_repeat_interleave_not_repeat():
     """Query head i attends to kv head i // gqa.
 
-    repeat would give i % Hkv, so check the two differ and we took interleave.
+    repeat would give i % Hkv, so check that the two differ and that
+    repeat_interleave is used.
     """
     k = torch.arange(8, device=DEV).reshape(1, 4, 2, 1).float()   # Hkv=4
     interleaved = expand_kv(k, 2)
     assert interleaved.shape[1] == 8
-    # head 0 and 1 of the expansion must both come from kv head 0
+    # heads 0 and 1 of the expansion must both come from kv head 0
     assert torch.equal(interleaved[:, 0], k[:, 0])
     assert torch.equal(interleaved[:, 1], k[:, 0])
     assert torch.equal(interleaved[:, 2], k[:, 1])
@@ -132,9 +132,8 @@ SMALL = [
 def build_or_skip(impl, cfg):
     """Build and run once, returning (built, out) or None.
 
-    SDPA reports missing coverage by raising "No available kernel" from the call
-    rather than from the build, and a sweep records that as UNSUPPORTED. Tests
-    treat it the same way instead of failing on it.
+    SDPA raises "No available kernel" from the call when it lacks coverage, and
+    the sweep records that as UNSUPPORTED. Tests skip it the same way.
     """
     try:
         built = impl.build(cfg, DEV)
@@ -168,10 +167,9 @@ def test_every_impl_passes_the_gate(cfg):
 
 @pytest.mark.parametrize("cfg", SMALL, ids=lambda c: c.key())
 def test_run_allocates_nothing_beyond_its_output(cfg):
-    """A transpose or contiguous() in the hot path measures a copy.
+    """The timed call must not copy its inputs.
 
-    The slack is a few outputs worth, so a hidden K/V materialization still
-    trips it.
+    The allowance is a few outputs, so a hidden K/V copy still fails the test.
     """
     info = dev_info()
     out_bytes = cfg.B * cfg.Hq * cfg.q_len * cfg.D * 2
@@ -235,8 +233,11 @@ def test_oom_prediction_is_analytic_and_large():
 
 
 def test_reference_is_independently_correct():
-    """P0 both computes the reference and competes in the ranking, so
-    check it once against NumPy in fp64, which shares no code with it."""
+    """Check P0 against NumPy in fp64.
+
+    P0 is both the reference and a ranked implementation, so it is checked
+    against code it shares nothing with.
+    """
     import numpy as np
     cfg = Cfg("prefill", B=1, Hq=2, Hkv=2, D=16, N=6)
     t = make_inputs(cfg, DEV)
@@ -253,17 +254,16 @@ def test_reference_is_independently_correct():
 
 # Adversarial input families.
 #
-# Standard-normal inputs exercise the easy part of softmax. The trap specific
-# to attention is logit magnitude: without max-subtraction the exponentials
-# overflow and the kernel returns NaN, and a kernel that only ever sees
-# N(0, 1) inputs passes every test while being wrong in production.
+# Standard-normal inputs only test the easy part of softmax. Without
+# max-subtraction, large logits overflow and the kernel returns NaN, which
+# N(0, 1) inputs never trigger.
 
 FAMILIES = {
-    # q.k over D=64 dims has std ~8; scaling both by 16 puts pre-softmax
-    # logits near 256, where exp() overflows fp32 unless the max is removed.
+    # q.k over D=64 dims has std ~8. Scaling both by 16 puts the logits near
+    # 256, where exp() overflows fp32 unless the max is subtracted.
     "large-logits": {"q": 16.0, "k": 16.0},
-    # Every key equally weighted. Degenerate, and a plausible place for a
-    # tie-breaking or normalisation bug to surface.
+    # Every key weighted equally, which can expose tie-breaking or
+    # normalisation bugs.
     "zero-logits": {"q": 0.0, "k": 0.0},
     # Denormal territory in fp16.
     "tiny-values": {"q": 1e-3, "k": 1e-3, "v": 1e-3},
@@ -276,11 +276,11 @@ ADVERSARIAL = [
 
 
 def _scaled_inputs(scales):
-    """make_inputs, with named tensors rescaled.
+    """make_inputs with named tensors rescaled.
 
-    Patched into both akp.impls and akp.check so the implementation and the
-    reference it is graded against see the same tensors; check.py binds
-    make_inputs at import, so patching one module is not enough.
+    Patched into both akp.impls and akp.check so the implementation and its
+    reference see the same tensors. check.py imports make_inputs directly, so
+    patching one module is not enough.
     """
     def wrapper(cfg, device, seed=0, requires_grad=False):
         t = make_inputs(cfg, device, seed=seed, requires_grad=False)
@@ -319,20 +319,19 @@ def test_impls_stay_finite_and_correct_on_adversarial_inputs(family, cfg,
     assert ran >= 2, f"no implementations were exercised for {family!r}"
 
 
-# Decode reads the whole cache, asserted against the implementations.
+# Every decode implementation reads the whole cache.
 
 @pytest.mark.parametrize("where", ["first", "last"])
 def test_every_decode_impl_reads_the_named_cache_position(monkeypatch, where):
-    """Every decode path must depend on the same allowed keys.
+    """Every decode implementation must read the same cache positions.
 
-    test_decode_query_attends_to_every_cached_key pins the *reference*. This
-    pins the implementations, which is where the trap actually bites: D2-sdpa
-    forwards cfg.causal into SDPA, and SDPA's top-left is_causal at q_len=1
-    keeps only key 0. A path with that bug is fast and silently wrong.
+    test_decode_query_attends_to_every_cached_key checks the reference. This
+    checks the implementations. D2-sdpa passes cfg.causal to SDPA, whose
+    top-left is_causal at q_len=1 keeps only key 0.
 
-    V is zeroed except at one cache position, so the output is that position's
+    V is zero except at one cache position, so the output is that position's
     attention weight. Reading the whole cache gives a non-zero output at either
-    end; keeping only key 0 gives exactly zero when the live position is last.
+    end. Keeping only key 0 gives zero when the live position is last.
     """
     from akp import impls as impls_mod
 
@@ -369,12 +368,11 @@ def test_every_decode_impl_reads_the_named_cache_position(monkeypatch, where):
 
 
 def test_decode_refuses_a_causal_flag_it_would_mis_mask():
-    """causal=True at q_len=1 is not a decode configuration we can honour.
+    """Decode configs reject causal=True.
 
-    Every published decode row carries causal=False, so no result depends on
-    this. It is a guard against a future grid: SDPA would silently keep key 0
-    while flash_attn_with_kvcache would keep all N, and the two would be
-    compared as if they computed the same thing.
+    All decode rows use causal=False, so no result depends on this. It guards
+    future grids, where SDPA would keep only key 0 while
+    flash_attn_with_kvcache keeps all N.
     """
     with pytest.raises(ValueError, match="causal"):
         Cfg("decode", B=1, Hq=2, Hkv=2, D=64, N=8, causal=True)

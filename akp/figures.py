@@ -1,22 +1,17 @@
-"""Regenerate every paper figure from results/processed, deterministically.
+"""Draw the supplementary figures from results/processed.
 
     python -m akp.figures results/processed
 
-Nothing here defines a metric. analysis.py owns the numbers and this only draws
-what it wrote, with two exceptions that are parsing rather than computing: the
-cell key (split by akp.conventions.cell_key) and results_live/provenance.txt.
-The one genuine computation is the winner/runner-up separation used to hatch
-fig1, and it reuses analysis.py's own bootstrap and practical threshold rather
-than inventing a second definition of "separated".
+analysis.py computes the numbers and this module draws them. The only
+calculation here is the winner separation used to hatch fig1, and it uses
+analysis.py's bootstrap and threshold.
 
-Determinism: the bootstrap seed is analysis.py's fixed one, every ordering is an
-explicit sort, and savefig writes no CreationDate, so re-running on unchanged
-input reproduces the PDFs byte for byte.
+Output is deterministic. The bootstrap seed is fixed, every ordering is an
+explicit sort, and the PDFs carry no creation date.
 
-Every figure facets by regime (or is single-regime by construction): decode
-tflops sit two to three orders below prefill, and fwd and fwd_bwd never share an
-axis because the 3.5x backward factor in tflops is an assumption, not a
-measurement.
+Figures are split by regime because decode TFLOP/s is two to three orders of
+magnitude below prefill. fwd and fwd_bwd never share an axis because the 3.5x
+backward FLOP factor is an assumption.
 """
 
 from __future__ import annotations
@@ -38,22 +33,18 @@ from matplotlib.patches import Patch, Rectangle
 from matplotlib.ticker import NullFormatter
 
 from akp.analysis import (PRACTICAL, paired_ratio_ci, per_cell_median, usable)
-# Colours and the cell-key parser live in one module so the paper, the figures
-# and the website cannot disagree on what a colour or a key field means.
+# Colours and the cell-key parser are shared with the website.
 from akp.conventions import COLOURS, cell_key, short_gpu
 
 DPI = 300
 
-# Okabe-Ito, for the categorical scales this module invents (provenance status,
-# inversion class). The per-implementation colours come from akp.conventions and
-# are disambiguated for colour-blind and greyscale readers by hatching, which
-# is the only channel that survives a black-and-white print.
+# Okabe-Ito palette for the provenance and inversion categories. Per-implementation
+# colours come from akp.conventions, with hatching added for greyscale print.
 OKABE = ["#0072b2", "#e69f00", "#009e73", "#d55e00",
          "#cc79a7", "#56b4e9", "#f0e442", "#000000"]
 
-# One pattern per implementation, in registry order. No empty pattern: an
-# ambiguous cell is drawn as hatch-on-white, and a blank one would read as
-# missing data.
+# One hatch pattern per implementation, in registry order. None is empty,
+# because a blank cell would look like missing data.
 PATTERNS = ["///", "\\\\\\", "xxx", "...", "+++", "ooo", "***", "|||", "---", "OO"]
 HATCH = {impl: PATTERNS[i % len(PATTERNS)]
          for i, impl in enumerate([k for k in COLOURS if k.startswith("P")])}
@@ -114,8 +105,7 @@ def load(proc: str) -> dict:
 
 
 def gpu_order(d: dict) -> list:
-    """GPUs ordered by compute capability, so a column position means an
-    architecture generation rather than an alphabetical accident."""
+    """GPUs ordered by compute capability."""
     env = (d["summary"] or {}).get("environment") or {}
     seen = sorted(set(d["cells"].gpu_name)) if len(d["cells"]) else []
     def cc(g):
@@ -125,19 +115,17 @@ def gpu_order(d: dict) -> list:
 
 
 def peak_bw(d: dict) -> dict:
-    """MEASURED peak bandwidth per GPU. Never the theoretical number: the
-    manifest records a measured copy rate and only falls back if it is absent,
-    so a figure that said "theoretical" would be mislabelling its own line."""
+    """Measured copy bandwidth per GPU from the run manifest."""
     env = (d["summary"] or {}).get("environment") or {}
     return {g: m.get("measured_peak_bw_gbs") for g, m in env.items()
             if m.get("measured_peak_bw_gbs")}
 
 
 def shared_cells(cells: pd.DataFrame, regime: str) -> pd.DataFrame:
-    """Cells every GPU that ran this regime actually ran.
+    """Cells that every GPU in this regime ran.
 
-    Matching matters: an implementation or a device that is absent where it
-    would have lost buys portability by not showing up.
+    Only matched cells are compared, so a missing device or implementation
+    cannot change a rate by being absent.
     """
     d = cells[cells.regime == regime]
     if not len(d):
@@ -147,14 +135,14 @@ def shared_cells(cells: pd.DataFrame, regime: str) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
-# Winner separation (the only quantity this module computes)
+# Winner separation
 # --------------------------------------------------------------------------- #
 
 def winner_table(rows: pd.DataFrame) -> pd.DataFrame:
-    """Per (gpu, cell): the fastest implementation, the runner-up, and whether
-    the gap clears BOTH thresholds -- a cluster bootstrap CI on the ratio that
-    excludes 1, and a ratio of at least PRACTICAL. A winner that clears neither
-    is a coin flip dressed as a result, which is what fig1 hatches.
+    """Per (gpu, cell), the fastest implementation, the runner-up, and whether
+    the gap is separated. Separated means the ratio is at least PRACTICAL and
+    the lower bound of its bootstrap interval is above 1. fig1 hatches cells
+    that are not separated.
     """
     cells = per_cell_median(usable(rows))
     out = []
@@ -167,8 +155,7 @@ def winner_table(rows: pd.DataFrame) -> pd.DataFrame:
         if len(sub) > 1:
             r = sub.iloc[1]
             ratio = float(r.median_us / w.median_us)
-            # Paired over process launches, with ratio and interval taken
-            # from one population, and separation requiring lo > 1.
+            # Paired over process launches. Separation requires lo > 1.
             kw = (dict(ids_a=r.repeat_ids, ids_b=w.repeat_ids)
                   if "repeat_ids" in sub.columns else {})
             ratio, lo, hi, n_launch = paired_ratio_ci(r.samples, w.samples, **kw)
@@ -186,8 +173,7 @@ def winner_table(rows: pd.DataFrame) -> pd.DataFrame:
 
 
 def _row_label(r) -> str:
-    # r["dt"], not r.dt: on a Series, .dt is pandas' datetime accessor and
-    # raises rather than returning the dtype field of the cell key.
+    # r["dt"] because r.dt is the pandas datetime accessor on a Series.
     if r.regime == "prefill":
         return "%s %s D%d B%d" % (r["md"], r["dt"], r["D"], r["B"])
     return "%s D%d Hkv%d B%d" % (r["dt"], r["D"], r["Hkv"], r["B"])
@@ -236,15 +222,13 @@ def fig1_winner_map(d: dict, wins: pd.DataFrame, out: str) -> str:
                 used.append(impl)
                 col = COLOURS.get(impl, "#333333")
                 if rec.separated:
-                    # Hatch in white over the fill: the texture is what a
-                    # greyscale print has to tell implementations apart, and a
-                    # dark hatch at this row height swallows the colour.
+                    # White hatch over the fill so implementations stay
+                    # distinct in greyscale without hiding the colour.
                     ax.add_patch(Rectangle(
                         (x, y), 1, 1, facecolor=col, edgecolor="#ffffffcc",
                         hatch=HATCH.get(impl), linewidth=0.25))
                 else:
-                    # Not separated from #2 by both thresholds: hatch on white,
-                    # so the claim "this kernel won here" is visibly weaker.
+                    # Not separated from the runner-up, so draw hatch on white.
                     ax.add_patch(Rectangle(
                         (x, y), 1, 1, facecolor="white", edgecolor=col,
                         hatch=HATCH.get(impl), linewidth=0.35))
@@ -260,8 +244,8 @@ def fig1_winner_map(d: dict, wins: pd.DataFrame, out: str) -> str:
         idx = list(order.index[blocks])
         for i in idx[1:]:
             ax.axhline(i, color="#999999", linewidth=0.4)
-        # Every block gets a separator; only the ones that clear the label
-        # height get a label, so ticks never overprint each other.
+        # Every block gets a separator. Only blocks tall enough get a label,
+        # so labels never overlap.
         rows_per_label = max(1, int(np.ceil(len(order) / (panel_in[ax_i] * 72 / 6.0))))
         keep, last = [], -10 ** 9
         for i in idx:
@@ -320,9 +304,7 @@ def _versions(d: dict):
 def _densest_slice(d: pd.DataFrame, keys) -> dict:
     """The fixed-parameter slice with the most (gpu, impl, N) points.
 
-    A latency-vs-N line has to hold batch, head dim and dtype fixed or it is a
-    plot of three variables at once; picking the best-covered slice from the
-    data keeps the choice out of the source.
+    Batch, head dim and dtype are held fixed so each line varies only N.
     """
     g = (d.groupby(list(keys))
          .apply(lambda s: s.groupby(["gpu_name", "implementation", "N"]).ngroups,
@@ -356,8 +338,8 @@ def fig2_prefill_latency(d: dict, out: str) -> str:
                              figsize=(2.05 * len(gpus) + 1.6, 2.5 * len(modes)),
                              sharex=True)
     for i, md in enumerate(modes):
-        # sharey WITHIN a mode row only: fwd_bwd is a different measurement,
-        # and putting it on a fwd axis would invite reading the gap as a speedup.
+        # Share the y axis only within a mode row, since fwd_bwd measures
+        # different work from fwd.
         base = None
         for j, g in enumerate(gpus):
             ax = axes[i][j]
@@ -386,7 +368,7 @@ def fig2_prefill_latency(d: dict, out: str) -> str:
                for i in sorted(set(sub.implementation))]
     fig.legend(handles=handles, loc="outside center right", frameon=False)
     fig.suptitle("Prefill latency vs sequence length (causal, %s)\n"
-                 "log-log; each row of panels has its own y axis -- fwd and "
+                 "log-log, each row of panels has its own y axis -- fwd and "
                  "fwd_bwd are different measurements" % _fixed_label(sel),
                  fontsize=9)
     return save(fig, out, "fig2_prefill_latency.pdf")
@@ -433,7 +415,7 @@ def fig3_decode_bandwidth(d: dict, out: str) -> str:
                           label="measured peak copy bandwidth (this host)"))
     fig.legend(handles=handles, loc="outside center right", frameon=False)
     fig.suptitle("Decode: effective KV-cache bandwidth vs KV length (%s)\n"
-                 "bytes = KV actually streamed / measured latency; the dashed "
+                 "bytes = KV actually streamed / measured latency, the dashed "
                  "line is each device's MEASURED peak, not a vendor figure;\n"
                  "points above it mean the KV slice was served from cache "
                  "rather than streamed from HBM" % _fixed_label(sel),
@@ -464,9 +446,8 @@ PROV_STYLE = {
 def parse_provenance(path: str) -> tuple[dict, dict]:
     """cuobjdump output as {library: {"sass": [...], "ptx": [...]}}.
 
-    Needs no GPU: it reads what the shipped wheels contain, which is the only
-    way to separate "this kernel is slow here" from "this wheel has no code for
-    here". Returns (libs, header) where header carries the version comments.
+    Reads which targets the installed wheels contain code for, with no GPU
+    needed. Returns (libs, header), where header holds the version comments.
     """
     libs, head = {}, {}
     for line in open(path, encoding="utf8"):
@@ -494,13 +475,13 @@ def parse_provenance(path: str) -> tuple[dict, dict]:
 def provenance_matrix(libs: dict, targets: list, cuda: str | None) -> pd.DataFrame:
     """Status of each library on each target architecture.
 
-    "runs older cubin" is CUDA minor-version binary compatibility: a cubin built
-    for sm_80 loads on sm_86 and sm_89 because they share the major version.
-    That is the mechanism the packaging hypothesis is CONSISTENT WITH; nothing
-    here proves it caused any latency, only that no native code was shipped.
+    "runs older cubin" means CUDA minor-version binary compatibility. A cubin
+    built for sm_80 loads on sm_86 and sm_89 because they share a major
+    version. This shows only that no native code shipped, not that it caused
+    any latency difference.
     """
-    # ponytail: nvcc gained SM 12.x in CUDA 12.9, so a run-time JIT under 12.8
-    # cannot target Blackwell consumer parts. One threshold, stated once.
+    # nvcc added SM 12.x in CUDA 12.9, so a run-time JIT under 12.8 cannot
+    # target Blackwell consumer GPUs.
     cu = float(re.match(r"(\d+\.\d+)", str(cuda or "0")).group(1)) if cuda else 0.0
     out = {}
     for lib, info in sorted(libs.items()):
@@ -577,7 +558,7 @@ def fig4_provenance(d: dict, prov_path: str, out: str) -> tuple[str, pd.DataFram
     ax.set_title("Binary provenance of the shipped wheels (cuobjdump, no GPU "
                  "required)\ntorch %s / CUDA %s / flash-attn %s / flashinfer %s "
                  "-- an orange cell runs another architecture's cubin under\n"
-                 "CUDA minor-version binary compatibility; this is a packaging "
+                 "CUDA minor-version binary compatibility, this is a packaging "
                  "fact, consistent with (not proof of) the latency it sits beside"
                  % _versions(d), fontsize=8, pad=22)
     return save(fig, out, "fig4_provenance.pdf"), mat
@@ -590,10 +571,9 @@ def fig4_provenance(d: dict, prov_path: str, out: str) -> tuple[str, pd.DataFram
 def examined_pairs(cells: pd.DataFrame, a: str, b: str) -> dict:
     """Implementation pairs comparable on both devices, per regime.
 
-    analysis.inversions records only the pairs whose ordering flipped, and its
-    pairs_examined counter runs across both regimes at once, so it cannot be
-    sliced. The denominator of a per-regime inversion rate has to be recounted,
-    and it is C(k,2) over the implementations each shared cell ran on both.
+    analysis.inversions counts pairs across both regimes together, so the
+    per-regime denominator is recounted here as C(k,2) over the
+    implementations each shared cell ran on both devices.
     """
     m = cells[cells.gpu_name.isin([a, b])]
     out = {}
@@ -622,8 +602,7 @@ def _inv_class(r):
 
 
 def _same_arch_pair(d: dict) -> tuple | None:
-    """The control pair: two GPUs of the same compute capability. Its inversion
-    rate is the noise floor every cross-architecture number is read against."""
+    """Two GPUs with the same compute capability, used as the control pair."""
     env = (d["summary"] or {}).get("environment") or {}
     inv = d["inversions"]
     if not len(inv):
@@ -667,10 +646,8 @@ def fig5_inversion_scatter(d: dict, out: str) -> str:
                 lo = min(s.r1.min(), s.r2.min()) * 0.8
                 hi = max(s.r1.max(), s.r2.max()) * 1.25
                 lim = (min(lo, 1 / hi), max(hi, 1 / lo))
-            # The two inversion quadrants. Everything plotted is already a sign
-            # flip -- analysis.inversions only records pairs whose ordering
-            # changed -- so the shading names the quadrants rather than
-            # selecting anything.
+            # Shade the two inversion quadrants. Every plotted pair already
+            # changed order, so the shading only labels them.
             for (x0, x1, y0, y1) in ((lim[0], 1, 1, lim[1]), (1, lim[1], lim[0], 1)):
                 ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, zorder=0,
                                        facecolor="#0072b214", edgecolor="none"))
@@ -708,7 +685,7 @@ def fig5_inversion_scatter(d: dict, out: str) -> str:
                title="separation of the flip")
     fig.suptitle("Matched-cell ordering flips between GPU pairs\n"
                  "each point is one implementation pair (A, B) in one "
-                 "configuration; the off-diagonal quadrants (shaded) are the\n"
+                 "configuration, the off-diagonal quadrants (shaded) are the\n"
                  "inversions -- A beats B on one device and loses on the other",
                  fontsize=9)
     return save(fig, out, "fig5_inversion_scatter.pdf")
@@ -729,8 +706,7 @@ def _r(x, n=4):
 def _flips(cells: pd.DataFrame, regime: str, gpus: list) -> dict:
     """Winner-flip rate over the cells every GPU in `gpus` ran.
 
-    The per-GPU winner counts are what makes a flip rate readable: 82% of
-    configurations changing hands says nothing about which kernel lost them.
+    Also returns per-GPU winner counts, which show which kernels won.
     """
     d = cells[(cells.regime == regime) & cells.gpu_name.isin(gpus)]
     n = d.groupby("cell").gpu_name.nunique()
@@ -770,8 +746,7 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
                                 "triton": next((m.get("versions", {}).get("triton")
                                                 for m in env.values()
                                                 if m.get("versions")), None)}
-    # The decode cross-GPU comparison confounds architecture with a commit and
-    # driver change. This is the table that says so, and it is computed.
+    # Per-device run provenance.
     if "git_sha" in rows:
         out["provenance_of_rows"] = {
             "%s|%s" % (short_gpu(g), reg): {"commit": sha[:8],
@@ -783,9 +758,8 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
             reg for reg in set(rows.regime)
             if rows[rows.regime == reg].git_sha.str[:8].nunique() > 1)
 
-    # Finding 1, over every subset of GPUs. The matched-cell count changes
-    # with the subset -- a device that skipped a configuration removes it for
-    # everyone -- so the denominator travels with every rate.
+    # Flip rate over every subset of GPUs. The matched-cell count depends on
+    # the subset, so each rate is stored with its denominator.
     out["winner_flips_all_gpus"] = {
         reg: _flips(cells, reg, sorted(set(sh.gpu_name)))
         for reg in REGIMES for sh in [shared_cells(cells, reg)] if len(sh)}
@@ -799,8 +773,7 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
                     out["winner_flips_by_gpu_subset"][
                         "%s|%s" % (reg, " vs ".join(short_gpu(g) for g in sub))] = f
 
-    # Winner counts, and the absolute latency behind them: never a ranking
-    # without the microseconds it is a ranking of.
+    # Winner counts with their absolute latencies.
     out["winners_by_gpu"] = {
         "%s|%s" % (short_gpu(g), reg): {
             "counts": s.winner.value_counts().to_dict(),
@@ -809,12 +782,8 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
             "max_winning_latency_us": _r(s.winner_us.max(), 2)}
         for (g, reg), s in wins.groupby(["gpu_name", "regime"])}
 
-    # The same rate, restricted to cells whose winner is decisively ahead of
-    # second place on EVERY device in the subset. A flip between two
-    # implementations that were never apart is not a portability failure, and
-    # 60.7% of cells have no separated winner at all, so the unrestricted rate
-    # counts a lot of coin flips. Reporting both is the honest form: prefill
-    # survives the restriction, decode largely does not.
+    # The same rate over cells with a separated winner on every device in the
+    # subset. Most cells have no separated winner, so both rates are reported.
     sepset = {(r.gpu_name, r.cell) for r in wins.itertuples() if r.separated}
     win = {(r.gpu_name, r.cell): r.winner for r in wins.itertuples()}
     out["winner_flips_separated_only"] = {}
@@ -822,14 +791,13 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
         gs = sorted(set(cells[cells.regime == reg].gpu_name))
         for r in range(2, len(gs) + 1):
             for sub in itertools.combinations(gs, r):
-                # Same matching rule _flips uses: cells every GPU in the
-                # subset actually ran.
+                # Same matching rule as _flips.
                 d0 = cells[(cells.regime == reg) & cells.gpu_name.isin(sub)]
                 nn = d0.groupby("cell").gpu_name.nunique()
                 matched = sorted(nn[nn == len(sub)].index)
                 keep = [c for c in matched
                         if all((g, c) in sepset for g in sub)]
-                if len(keep) < 5:      # a rate over <5 cells is not a rate
+                if len(keep) < 5:      # too few cells for a rate
                     continue
                 flips = sum(1 for c in keep
                             if len({win.get((g, c)) for g in sub}) > 1)
@@ -848,7 +816,7 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
                             "median_winner_over_runner_up": _r(s.ratio.median(), 3)}
                       for reg, s in wins.groupby("regime")}}
 
-    # Finding 2.
+    # Bandwidth utilisation.
     sp = d["spread"]
     out["spread_slowest_over_fastest"] = {
         reg: {"median": _r(s.spread.median(), 2), "p90": _r(s.spread.quantile(.9), 2),
@@ -876,8 +844,7 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
                 "statistical_and_practical_rate":
                     _r((s.sig & s.practical).sum() / n) if n else None}
 
-    # Decode is bandwidth-bound; this is what makes the regime contrast mean
-    # something. Peak is MEASURED on the host, never a vendor figure.
+    # Peak is the copy bandwidth measured on each host.
     dec = ok[(ok.regime == "decode") & ok.eff_bw_gbs.notna()]
     out["decode_bandwidth"] = {"_note": "utilisation above 1 means the KV slice "
                                "fit in cache and was not streamed from HBM; the "
@@ -890,7 +857,7 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
                        "max_utilisation": _r(s.bw_util.max(), 3)}
         for g, s in dec.groupby("gpu_name")})
 
-    # Finding 3: torch.compile does not rewrite naive attention into SDPA.
+    # Whether torch.compile's attention-fusion pattern fired.
     ind = rows[rows.implementation.str.startswith(("P1-", "D1-"))]
     out["inductor_fusion"] = {
         "n_inductor_rows": int(len(ind)),
@@ -902,8 +869,7 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
                    for g, s in ind.groupby("gpu_name")}
         if "fuse_attention" in ind else {}}
 
-    # Where an implementation could not run at all, and why. An absent kernel is
-    # a portability result, not a missing data point.
+    # Where an implementation could not run, and why.
     out["coverage"] = {
         "%s|%s" % (short_gpu(g), reg): {
             impl: {k: int(v) for k, v in s.status.value_counts().items()}
@@ -915,7 +881,7 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
             set(sub.implementation) - set(sub[sub.status == "OK"].implementation))
         for (g, reg), sub in rows.groupby(["gpu_name", "regime"])}
 
-    # Cost of standardising on one backend, with the latency it costs.
+    # Cost of standardising on one backend.
     port = d["portability"]
     if len(port):
         out["portability_cost"] = {
@@ -945,16 +911,15 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
                        "driver": m.get("driver"), "cuda": m.get("cuda")}
         for g, m in sorted(env.items())}
     out["not_collected"] = {
-        "nsight_compute": "blocked on every platform used; no counter data exists",
-        "nsight_systems": "blocked on every platform used; no trace data exists"}
+        "nsight_compute": "blocked on every platform used, no counter data exists",
+        "nsight_systems": "blocked on every platform used, no trace data exists"}
     return out
 
 
 # --------------------------------------------------------------------------- #
 
 def _selftest():
-    """One runnable check on the two pieces of real logic: the provenance
-    parser and the minor-version-compat rule."""
+    """Check the provenance parser and the minor-version compatibility rule."""
     import tempfile
     txt = ("# binary provenance -- test\n# torch 2.9.0+cu128\n"
            "flash-attn-2   951MB  SASS[ sm_80 sm_90 sm_120 ]  PTX[ none ]\n"
@@ -983,12 +948,10 @@ def _selftest():
 
 
 def fig6_winner_bands(d: dict, wins: pd.DataFrame, out: str) -> str:
-    """The winner map binned to workload bands, sized for one paper column.
+    """The winner map binned into workload bands, sized for one paper column.
 
-    fig1 draws one row per configuration, which is right for the artifact and
-    unreadable at 3.03 in: its 5 pt labels land near 2 pt. Binning to a dozen
-    bands keeps the pattern the figure exists to show, which is whether the
-    colour changes across a row, and makes the labels legible in print.
+    fig1 has one row per configuration, which is too small to read at column
+    width. About a dozen bands keep the pattern and make labels legible.
     """
     w = wins.copy()
     k = cell_key(w.cell)
@@ -1012,9 +975,8 @@ def fig6_winner_bands(d: dict, wins: pd.DataFrame, out: str) -> str:
             sub = w[(w.band == bd) & (w.gpu_name.map(short_gpu) == g)]
             if not len(sub):
                 continue
-            # Modal winner in the band, and whether the band is decisive: a
-            # band where most cells have no separated winner is drawn hollow,
-            # so a colour change there is not read as a real difference.
+            # Most common winner in the band. Bands where most cells have no
+            # separated winner are drawn hollow.
             top = sub.winner.value_counts().idxmax()
             share = sub.separated.mean()
             ax.add_patch(Rectangle((xi, yi), 1, 1,
@@ -1044,10 +1006,9 @@ def main(argv=None):
     ap.add_argument("processed", nargs="?", default="results/processed",
                     help="directory analysis.py wrote")
     ap.add_argument("--out", default="results/figures")
-    # analysis.py copies the cuobjdump summary in beside its own output, so the
-    # default follows the processed directory rather than a local scratch path.
+    # analysis.py copies the cuobjdump summary into the processed directory.
     ap.add_argument("--provenance", default=None,
-                    help="cuobjdump summary; default <processed>/binary_provenance.txt")
+                    help="cuobjdump summary, default <processed>/binary_provenance.txt")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
@@ -1058,7 +1019,7 @@ def main(argv=None):
     _style()
     d = load(a.processed)
     if not len(d["cells"]):
-        raise SystemExit("no cells.parquet under %r; run akp.analysis first"
+        raise SystemExit("no cells.parquet under %r, run akp.analysis first"
                          % a.processed)
     os.makedirs(a.out, exist_ok=True)
 

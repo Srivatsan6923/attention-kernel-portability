@@ -43,9 +43,8 @@ def save(fig, out, name):
 def fig_separation(L, out, name="figA_separation.pdf"):
     """Per device, the fraction of configurations with a separated winner."""
     by = L["questions"]["separation_by_device"]
-    # One order for every figure and table in the paper and on the site:
-    # ascending compute capability. Sorting by a measured rate makes the same
-    # device sit in a different column in each figure.
+    # Every figure and table orders devices by compute capability, so a device
+    # sits in the same column everywhere.
     CC = {"A100": 8.0, "A10": 8.6, "L40": 8.9, "L40S": 8.9,
           "H100": 9.0, "RTX 5090": 12.0}
     devs = sorted(by, key=lambda g: (CC.get(g, 99), g))
@@ -92,10 +91,10 @@ def fig_separation(L, out, name="figA_separation.pdf"):
 
 
 def transfer_samples(rows):
-    """Per-comparison transfer cost, for the distribution panel.
+    """Per-comparison transfer cost for the distribution panel.
 
-    Recomputed here only because the ledger stores summary statistics; the
-    definition is imported, not restated.
+    The ledger stores only summary statistics, so the samples are recomputed
+    here with the ledger's own definitions.
     """
     cells = per_cell_median(usable(rows))
     rec = build_index(cells)
@@ -153,7 +152,7 @@ def fig_transfer(L, rows, out, name="figB_transfer.pdf"):
     ax.legend(frameon=False, fontsize=6)
     ax.set_title("A  Winner changes, Ampere/Ada/Hopper", loc="left")
 
-    # ---- Panel B: what the flip actually costs
+    # ---- Panel B: cost of reusing the source choice
     samples, unavail = transfer_samples(rows)
     for key, col, lab in (("prefill", COL_PRE, "forward prefill"),
                           ("decode", COL_DEC, "decode")):
@@ -169,16 +168,14 @@ def fig_transfer(L, rows, out, name="figB_transfer.pdf"):
     ax2.set_xlim(0.98, 4)
     ax2.set_xticks([1, 1.5, 2, 3])
     ax2.set_xticklabels(["1.0", "1.5", "2", "3"])
-    # A log axis relabels its own minor ticks ("4 x 10^0") over the top of the
-    # explicit ones; the ratio is small and unitless, so suppress them.
+    # Hide the log axis minor tick labels, which draw over the explicit ticks.
     ax2.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
     ax2.set_xlabel("target latency of the source's choice / target best")
     ax2.set_ylabel("cumulative fraction of costed transfers")
     ax2.set_ylim(0, 1)
     ax2.legend(frameon=False, loc="lower right", fontsize=6)
     ax2.set_title("B  Cost of reusing the source GPU's choice", loc="left")
-    # Coverage belongs in the caption: inside the axes it overlapped the
-    # curves and shrank past legibility at column width.
+    # Coverage goes in the caption because it does not fit inside the axes.
     print("  caption coverage: " + "; ".join(
         "%s %d of %d source choices had no eligible target timing"
         % (k, u[0], u[1]) for k, u in sorted(unavail.items())))

@@ -3,10 +3,8 @@
 #
 #   scripts/nrp_fetch.sh [dest]      # default dest: ./results
 #
-# kubectl cp execs tar inside a running container, and once the sweep Jobs are
-# Completed there is nothing left to exec into. So stand up a short-lived
-# CPU-only pod that mounts the volume, copy, then delete it. No GPU, so it does
-# not touch the A100 quota or trip the idle-GPU policy.
+# kubectl cp needs a running container, and the sweep pods have exited. This
+# starts a small CPU-only pod that mounts the volume, copies, and deletes it.
 set -euo pipefail
 
 DEST=${1:-./results}
@@ -38,13 +36,10 @@ YAML
 
 kubectl wait --for=condition=Ready "pod/$POD" --timeout=300s
 mkdir -p "$DEST"
-# raw shards, the interned dispatch traces and the per-device manifests all
-# live under /data, not under /data/raw.
 kubectl cp "$POD:/data/raw" "$DEST/raw"
 kubectl cp "$POD:/data/environment" "$DEST/environment"
 kubectl cp "$POD:/data/dispatch.jsonl" "$DEST/dispatch.jsonl"
-# One report per pod, and the record of what each host was allowed to measure.
-# A row is only as good as the preflight the pod that wrote it passed.
+# Preflight reports, one per pod.
 kubectl cp "$POD:/data/preflight" "$DEST/preflight" 2>/dev/null || true
 
 echo "copied to $DEST"

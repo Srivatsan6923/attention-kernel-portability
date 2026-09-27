@@ -1,12 +1,13 @@
-"""Attention implementations behind one interface: build(cfg, device) -> Built.
+"""Attention implementations behind one interface, build(cfg, device) -> Built.
 
-build() puts inputs in the kernel native layout; fn() only calls the kernel, so
-nothing in the timed path is a transpose or an allocation.
+build() puts inputs in the kernel's native layout and fn() only calls the
+kernel, so the timed path has no transposes or allocations.
 
-Cfg.causal is the intended math, not an argument to pass through. FlashAttention
->= 2.1 aligns causal bottom-right, SDPA is_causal is top-left; they agree only
-when q_len == kv_len. At q_len=1 FA attends to all N keys while SDPA attends to
-key 0, so decode passes each API its own "attend to everything" spelling.
+Cfg.causal describes the intended math and is not passed through blindly.
+FlashAttention >= 2.1 aligns the causal mask bottom-right and SDPA is_causal
+aligns it top-left. They agree only when q_len == kv_len. At q_len=1 FA attends
+to all N keys while SDPA attends to key 0, so decode gives each API its own
+way of saying "attend to everything".
 """
 
 from __future__ import annotations
@@ -37,16 +38,14 @@ class Cfg:
     dtype: str = "bf16"
     mode: str = "fwd"      # "fwd" | "fwd_bwd"          (prefill only)
     launch: str = "eager"  # "eager" | "cudagraph"      (decode only)
-    cache: str = "warm"    # "warm" | "cold"  -- L2 state at the start of a call
-    causal: bool = True    # mathematical intent; see module docstring
+    cache: str = "warm"    # "warm" | "cold", L2 state at the start of a call
+    causal: bool = True    # intended math, see module docstring
 
     def __post_init__(self):
-        # Decode is defined as one query attending to every cached key. There
-        # is no agreed spelling of "causal" at q_len=1: flash-attn's
-        # bottom-right alignment keeps all N keys, SDPA's top-left keeps only
-        # key 0, and _d2 hands cfg.causal straight to SDPA. Constructing such a
-        # config would silently compare two different functions, so refuse it
-        # here rather than discover it in a ranking.
+        # Decode is one query attending to every cached key. At q_len=1
+        # flash-attn's causal mask keeps all N keys and SDPA's keeps only key 0,
+        # and _d2 passes cfg.causal straight to SDPA. A causal decode config
+        # would compare two different functions, so reject it.
         if self.regime == "decode" and self.causal:
             raise ValueError(
                 "decode with causal=True is ambiguous at q_len=1: SDPA would "
@@ -79,33 +78,33 @@ def itemsize(cfg: Cfg) -> int:
     return torch.finfo(cfg.torch_dtype).bits // 8
 
 
-# The impls that materialise the B*Hq*N*N score matrix, and so are the ones
-# naive_peak_bytes describes. Lives here rather than in run.py because analysis
-# needs it too, and run.py cannot be imported without triton.
+# Implementations that materialise the B*Hq*N*N score matrix, which is what
+# naive_peak_bytes models. Defined here because analysis needs it and run.py
+# cannot be imported without triton.
 NAIVE_LIKE = ("P0-naive", "P1-inductor", "P1-inductor-nofuse",
               "P1-inductor-where")
 
 
 def naive_peak_bytes(cfg: Cfg) -> int:
-    """Peak allocation of the score-matrix impls: scores, fp32 upcast, probs.
+    """Peak allocation of the score-matrix implementations.
 
-    Repeatedly attempting a 68 GB allocation fragments the caching allocator, so
-    cells above capacity are skipped rather than tried.
+    Covers the scores, their fp32 upcast and the probabilities. Cells above
+    capacity are skipped because a failed 68 GB allocation fragments the
+    caching allocator.
     """
     if cfg.regime != "prefill":
         return 0
     n_scores = cfg.B * cfg.Hq * cfg.N * cfg.N
     qkv = 3 * cfg.B * cfg.Hq * cfg.N * cfg.D * itemsize(cfg)
-    # Measured 10.8 B per score element on sm89: softmax(dtype=fp32) holds the
-    # dtype scores, an fp32 upcast of them and its fp32 output at once, and the
-    # bool causal mask outlives all three. 2*itemsize + 9 bounds that. Erring
-    # high only skips a cell; erring low attempts the allocation this exists to
-    # refuse, and a failed 68 GB attempt fragments the allocator.
+    # Measured 10.8 B per score element on sm89. softmax(dtype=fp32) holds the
+    # scores, an fp32 upcast and its fp32 output at once, and the bool causal
+    # mask outlives all three. 2*itemsize + 9 is an upper bound. Overestimating
+    # only skips a cell, while underestimating attempts the allocation.
     return qkv + n_scores * (2 * itemsize(cfg) + 9)
 
 
 # --------------------------------------------------------------------------- #
-# Inputs -- logical layout is BHSD everywhere; impls convert in build()
+# Inputs. Logical layout is BHSD everywhere and impls convert in build()
 # --------------------------------------------------------------------------- #
 
 def make_inputs(cfg: Cfg, device: torch.device, seed: int = 0,
@@ -132,7 +131,7 @@ def make_inputs(cfg: Cfg, device: torch.device, seed: int = 0,
 def expand_kv(t: torch.Tensor, gqa: int) -> torch.Tensor:
     """Query head i attends to kv head i // gqa.
 
-    repeat_interleave, not repeat: repeat gives i % Hkv and is silently wrong.
+    Uses repeat_interleave because repeat would map head i to i % Hkv.
     """
     return t if gqa == 1 else t.repeat_interleave(gqa, dim=1)
 
@@ -152,7 +151,7 @@ class Impl:
     name: str
     regime: str
     build: Callable[[Cfg, torch.device], Built]
-    kernel_patterns: tuple[str, ...]   # classified in analysis.py, never asserted here
+    kernel_patterns: tuple[str, ...]   # matched against traces in analysis.py
     supports: Callable[[Cfg, dict], bool] = lambda cfg, dev: True
     note: str = ""
 
@@ -181,16 +180,16 @@ def causal_mask(n_q: int, n_k: int, device) -> torch.Tensor:
 
 
 def naive_attention(q, k, v, mask, scale: float, mask_mode: str = "masked_fill"):
-    """Explicit score matrix, written the way users write it.
+    """Attention with an explicit score matrix, written the usual way.
 
-    mask is built once in build(); constructing it here would allocate a
+    The mask is built once in build(). Building it here would allocate a
     16M-element tensor per call at N=4096.
     """
     s = (q @ k.transpose(-2, -1)) * scale
     if mask is not None:
         if mask_mode == "where":
-            # Same math as masked_fill, but the spelling TorchInductor
-            # _sfdp_pattern_18/19 match against.
+            # Same math as masked_fill, written the way TorchInductor's
+            # _sfdp_pattern_18/19 expect.
             s = torch.where(mask, s, torch.full((), float("-inf"),
                                                 dtype=s.dtype, device=s.device))
         else:
@@ -217,8 +216,8 @@ def _fwd_or_fwd_bwd(cfg: Cfg, t: dict, forward: Callable[[], torch.Tensor]):
     return fwd_bwd
 
 
-# Optional deps are imported lazily: a box without flash-attn or flashinfer
-# still loads the module and reports those cells UNSUPPORTED.
+# Optional dependencies are imported lazily, so a machine without flash-attn or
+# flashinfer still loads this module and reports those cells UNSUPPORTED.
 
 def _try(modname):
     try:
@@ -242,7 +241,7 @@ def sm(dev: dict) -> int:
 # --------------------------------------------------------------------------- #
 
 @register("P0-naive", "prefill", (r"gemm|matmul|softmax|elementwise",),
-          note="explicit N x N score matrix; correctness reference and OOM taxonomy")
+          note="explicit N x N score matrix, correctness reference and OOM taxonomy")
 def _p0(cfg, device):
     t = make_inputs(cfg, device, requires_grad=(cfg.mode == "fwd_bwd"))
     k = expand_kv(t["k"], cfg.gqa)
@@ -285,7 +284,7 @@ def _compiled_naive(cfg, device, fuse: bool, mask_mode: str = "masked_fill"):
 
 
 @register("P1-inductor", "prefill", (r"triton_|gemm|flash|fmha|cudnn",),
-          note="torch.compile as a user gets it; records the fuse_attention counter")
+          note="torch.compile as a user gets it, records the fuse_attention counter")
 def _p1(cfg, device):
     return _compiled_naive(cfg, device, fuse=True)
 
@@ -341,21 +340,21 @@ def _p2c(cfg, device):
 
 
 @register("P2d-sdpa-cudnn", "prefill", (r"cudnn|sm\d+_.*attn",),
-          note="vendor library path; availability and fallback vary by arch")
+          note="vendor library path, availability and fallback vary by arch")
 def _p2d(cfg, device):
     return _sdpa_impl(cfg, device, SDPBackend.CUDNN_ATTENTION, enable_gqa=True)
 
 
-# N >= 128 because the tutorial autotunes over BLOCK_M in [64, 128] and writes a
-# whole tile: at N < BLOCK_M it runs past the end of the output. Which config
-# autotune picks varies per process, so shorter sequences fail intermittently.
+# N >= 128 because the tutorial autotunes over BLOCK_M in [64, 128] and writes
+# whole tiles, so at N < BLOCK_M it writes past the end of the output. The
+# autotuned config varies per process, so shorter sequences fail intermittently.
 @register("P3-triton", "prefill", (r"_attn_fwd|_attn_bwd",),
           supports=lambda cfg, dev: cfg.D in (16, 32, 64, 128, 256) and cfg.N >= 128,
           note="vendored Triton tutorial-06; JIT-retargeted per device; MHA only")
 def _p3(cfg, device):
     from akp.vendor.triton_tutorial06 import attention as triton_attention
     t = make_inputs(cfg, device, requires_grad=(cfg.mode == "fwd_bwd"))
-    # The tutorial kernel has no GQA path: K/V must be materialized per q-head.
+    # The tutorial kernel has no GQA support, so K/V are expanded per query head.
     k = expand_kv(t["k"], cfg.gqa).contiguous()
     v = expand_kv(t["v"], cfg.gqa).contiguous()
     q = t["q"].contiguous()
@@ -368,7 +367,7 @@ def _p3(cfg, device):
 def _fa_prefill(cfg, device, v3: bool):
     mod = _try("flash_attn_interface" if v3 else "flash_attn")
     t = make_inputs(cfg, device, requires_grad=(cfg.mode == "fwd_bwd"))
-    # flash-attn wants BSHD; transpose outside the timed region.
+    # flash-attn expects BSHD. Transpose outside the timed region.
     q = t["q"].transpose(1, 2).contiguous()
     k = t["k"].transpose(1, 2).contiguous()
     v = t["v"].transpose(1, 2).contiguous()
@@ -398,11 +397,11 @@ def _p4h(cfg, device):
 
 
 # DECODE: q_len == 1 over a cache pre-filled to N, attention only.
-# flash_attn_with_kvcache appends in place when k/v are passed, so k=v=None is
-# required or the cache changes while it is being timed.
+# flash_attn_with_kvcache appends in place when k/v are passed, so k=v=None
+# keeps the cache unchanged while it is timed.
 
 @register("D0-naive-kv", "decode", (r"gemm|matmul|softmax|elementwise",),
-          note="explicit scores over the cache; reference, and shows GQA expansion cost")
+          note="explicit scores over the cache, reference, and shows GQA expansion cost")
 def _d0(cfg, device):
     t = make_inputs(cfg, device)
     k, v = expand_kv(t["k"], cfg.gqa), expand_kv(t["v"], cfg.gqa)
@@ -438,7 +437,7 @@ def _d2(cfg, device):
 
 @register("D3-fa-kvcache", "decode", (r"flash_fwd_splitkv|flash_fwd|flash::",),
           supports=lambda cfg, dev: has("flash_attn") and cfg.D <= 256,
-          note="contiguous vendor KV-cache path; k=v=None so the cache is read-only")
+          note="contiguous vendor KV-cache path, k=v=None so the cache is read-only")
 def _d3(cfg, device):
     from flash_attn import flash_attn_with_kvcache
     t = make_inputs(cfg, device)
@@ -456,12 +455,12 @@ def _d3(cfg, device):
 
 @register("D4-flashinfer", "decode", (r"BatchDecode|flashinfer|decode",),
           supports=lambda cfg, dev: has("flashinfer") and cfg.D in (64, 128, 256),
-          note="only paged-layout entry; page_size=N_kv so the layout matches D3")
+          note="only paged-layout entry, page_size=N_kv so the layout matches D3")
 def _d4(cfg, device):
     import flashinfer
     t = make_inputs(cfg, device)
-    # page_size = N is one page per sequence, so D3 vs D4 compares kernels
-    # rather than layouts. The page_size sweep is a separate ablation.
+    # page_size = N gives one page per sequence, so D3 and D4 differ by kernel
+    # and not by layout.
     page = cfg.N
     q = t["q"].transpose(1, 2).contiguous().squeeze(1)        # (B, Hq, D)
     kc = t["k"].transpose(1, 2).contiguous().unsqueeze(0).reshape(
@@ -474,8 +473,8 @@ def _d4(cfg, device):
 
     workspace = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=device)
     wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(workspace, "NHD")
-    # plan() schedules; it must stay outside the timed region and outside
-    # CUDA-graph capture.
+    # plan() does scheduling and must stay outside the timed region and
+    # outside CUDA-graph capture.
     wrapper.plan(indptr, indices, last, cfg.Hq, cfg.Hkv, cfg.D, page,
                  q_data_type=cfg.torch_dtype, kv_data_type=cfg.torch_dtype)
     fn = lambda: wrapper.run(q, (kc, vc))

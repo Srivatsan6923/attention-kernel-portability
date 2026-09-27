@@ -18,7 +18,7 @@ const { id, number, title, dataHref, downloadHref, wide = true } = Astro.props;
 	<figcaption>
 		<slot name="observations" />
 		<div class="fig-footer">
-			{downloadHref && <a href={downloadHref} download>Download SVG</a>}
+			{downloadHref && <a href={downloadHref} download>Download PDF</a>}
 			{downloadHref && dataHref && <span> · </span>}
 			{dataHref && <a href={dataHref}>View data</a>}
 		</div>

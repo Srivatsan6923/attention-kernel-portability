@@ -4,8 +4,7 @@
 #   scripts/run_gpu.sh                       # every grid, 5 repeats
 #   scripts/run_gpu.sh prefill_full decode_full
 #
-# Each repeat is a separate process because they need separate CUDA contexts,
-# and the between-process spread is the variance the bootstrap needs.
+# Each repeat runs in its own process. The bootstrap resamples these launches.
 set -euo pipefail
 
 GRIDS=${*:-"prefill_full prefill_gqa prefill_noncausal prefill_cold decode_full decode_cudagraph decode_cold"}
@@ -17,8 +16,7 @@ export FLASHINFER_JIT_CACHE_DIR=${FLASHINFER_JIT_CACHE_DIR:-$PWD/.cache/flashinf
 mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" "$FLASHINFER_JIT_CACHE_DIR"
 
 for grid in $GRIDS; do
-  # Warm the compile caches once so the timed repeats do not each pay for
-  # Inductor autotune and FlashInfer JIT.
+  # Fill the compile caches once before the timed repeats.
   python -m akp.run --grid "$grid" --prewarm
   for r in $(seq 0 $((REPEATS - 1))); do
     python -m akp.run --grid "$grid" --repeat "$r"

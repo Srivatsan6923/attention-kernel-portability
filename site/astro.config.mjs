@@ -10,15 +10,14 @@ import remarkMath from 'remark-math';
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://srivatsan6923.github.io',
-	// Served as a static subfolder of the Jekyll portfolio, so bundled asset URLs
-	// need the mount point. Jekyll skips directories starting with '_', hence the
-	// renamed assets dir.
+	// The site is served from a subfolder of the Jekyll portfolio. Jekyll skips
+	// folders that start with '_', so the assets folder is renamed.
 	base: '/projects/attention-kernel-portability',
 	build: { assets: 'astro-assets' },
 	integrations: [mdx(), sitemap()],
 	markdown: {
-		// remark-math parses $...$ and $$...$$; rehype-katex renders them at build
-		// time. KaTeX's stylesheet is imported locally in BaseHead.astro.
+		// remark-math parses $...$ and $$...$$, and rehype-katex renders them at
+		// build time. The KaTeX stylesheet is imported in BaseHead.astro.
 		processor: unified({
 			remarkPlugins: [remarkMath],
 			rehypePlugins: [rehypeKatex],

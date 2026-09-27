@@ -1,10 +1,7 @@
 # Shared volume for results and compile caches. Apply once.
 #
-# rook-cephfs, not rook-ceph-block: the sweep runs several pods at once and
-# ReadWriteOnce would let only one of them mount it.
-#
-# Pick a storage class in the same region as the GPU nodes or the I/O crosses
-# the country. rook-cephfs is US West; see nrp.ai/documentation/userdocs/storage.
+# rook-cephfs supports ReadWriteMany, which the parallel sweep pods need.
+# It is in US West. See nrp.ai/documentation/userdocs/storage.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

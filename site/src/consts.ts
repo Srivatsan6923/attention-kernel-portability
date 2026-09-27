@@ -1,4 +1,3 @@
-// Global site data.
 
 export const SITE_TITLE = 'Attention Kernel Portability Across GPU Architectures';
 export const SITE_DESCRIPTION =

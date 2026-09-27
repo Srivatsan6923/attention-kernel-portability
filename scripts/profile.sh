@@ -3,21 +3,19 @@
 #
 #   scripts/profile.sh [outdir]        # default: results/profile
 #
-# --prewarm builds each cell and calls it once, which is exactly what a profiler
-# wants, so this needs no separate entry point. One ncu pass covers every cell;
-# kernels are attributed afterwards by name.
+# --prewarm builds each cell and calls it once, which is all a profiler needs.
+# Kernels are matched to cells by name afterwards.
 #
-# ncu needs GPU performance counters, which shared clusters usually withhold
-# (ERR_NVGPUCTRPERM). nsys CUDA tracing does not, so it runs either way and the
-# launch-overhead half of the attribution survives without counters.
+# ncu needs performance counters, which shared hosts often block
+# (ERR_NVGPUCTRPERM). nsys tracing works without them, so it always runs.
 set -euo pipefail
 
 OUT=${1:-results/profile}
 GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr ' /' '--')
 mkdir -p "$OUT/$GPU"
 
-# Explicit metrics rather than --set full: full replays every kernel many times
-# and is roughly twenty times slower for counters we do not read.
+# A short metric list. --set full replays each kernel many times and is much
+# slower.
 METRICS=gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed,\
 sm__throughput.avg.pct_of_peak_sustained_elapsed,\
 lts__throughput.avg.pct_of_peak_sustained_elapsed,\
@@ -39,8 +37,8 @@ else
   echo "     skipping counters, the CUPTI timeline below still runs"
 fi
 
-# --sample=none/--cpuctxsw=none keeps nsys off perf_event_open, which is the
-# only part of it that needs elevated privileges.
+# --sample=none and --cpuctxsw=none avoid perf_event_open, the only part of
+# nsys that needs elevated privileges.
 echo "nsys: collecting launch timeline"
 nsys profile --sample=none --cpuctxsw=none --trace=cuda,nvtx --force-overwrite=true \
      -o "$OUT/$GPU/timeline" \
