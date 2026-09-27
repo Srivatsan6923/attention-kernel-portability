@@ -11,7 +11,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 <figure class="figure-wide prefill-speedup" id={id} data-prefill-speedup>
 	<div class="chart-head">
 		<div class="chart-title">
-			Prefill speedup over SDPA-flash by batch and sequence length
+			Prefill speedup over SDPA FlashAttention by batch and sequence length
 		</div>
 		<label class="chart-control">
 			<span>Implementation</span>
@@ -24,6 +24,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 
 <script>
 	import * as Plot from '@observablehq/plot';
+	import { nameOf } from '../../lib/backends';
 
 	// Family names, used only to order and label the select.
 	const FAMILY: [RegExp, string][] = [
@@ -36,7 +37,6 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 		[/./, 'PyTorch reference'],
 	];
 	const familyIndex = (impl: string) => FAMILY.findIndex(([re]) => re.test(impl));
-	const familyOf = (impl: string) => FAMILY[familyIndex(impl)][1];
 
 	// Clamp the colour ramp at 4x in both directions. The naive kernel is up to
 	// 30x slower and would wash out every other cell. Exact ratios are in the
@@ -141,7 +141,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 				legend: true,
 				ticks,
 				tickFormat: (v: number) => `${v < 1 ? fmtRatio(v) : String(v)}x`,
-				label: `speedup over SDPA-flash (colour capped at ${CLAMP}x, hover for exact value)`,
+				label: `speedup over SDPA FlashAttention (colour capped at ${CLAMP}x, hover for exact value)`,
 			},
 			marks: [
 				Plot.frame({ stroke: 'var(--border)', strokeWidth: 0.6 }),
@@ -152,9 +152,9 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 					fill: 'speedup',
 					inset: 0.5,
 					title: (d: Row) =>
-						`${d.impl} on ${panelOf(d.gpu)}\n` +
+						`${nameOf(d.impl)} on ${panelOf(d.gpu)}\n` +
 						`B=${d.B}, N=${d.N}\n` +
-						`${fmtRatio(d.speedup)}x the SDPA-flash speed\n` +
+						`${fmtRatio(d.speedup)}x the SDPA FlashAttention speed\n` +
 						`${fmtUs(d.us)} us against ${fmtUs(d.base_us)} us baseline`,
 					tip: true,
 				}),
@@ -194,7 +194,7 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 				...impls.map((impl) => {
 					const opt = document.createElement('option');
 					opt.value = impl;
-					opt.textContent = `${impl} (${familyOf(impl)})`;
+					opt.textContent = nameOf(impl);
 					return opt;
 				})
 			);
@@ -204,8 +204,8 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 			const draw = () => {
 				const n = render(plotEl, fig, data, select.value);
 				caption.textContent =
-					`SDPA-flash latency divided by ${select.value} latency at the same GPU, batch and sequence ` +
-					`length. Above 1.0 means ${select.value} is faster. ${n} of ${all.length} cells have data. ` +
+					`SDPA FlashAttention latency divided by ${nameOf(select.value)} latency at the same GPU, batch and sequence ` +
+					`length. Above 1.0 means ${nameOf(select.value)} is faster. ${n} of ${all.length} cells have data. ` +
 					`Hover a cell for both latencies. Values within about ${threshold}% of 1.0 are not a ` +
 					`clear difference.`;
 			};

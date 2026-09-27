@@ -114,7 +114,7 @@ performance portability over a stated set of platforms.
 \paragraph{Implementations and grid.} The prefill set is a naive PyTorch
 reference, a \code{torch.compile} path in three variants, the three PyTorch SDPA
 backends (memory-efficient, flash and cuDNN), the Triton fused-attention
-tutorial kernel with a small BF16 change, and FlashAttention 2 and 3. The decode
+tutorial kernel with a small BF16 change, and FlashAttention-2 and 3. The decode
 set is a naive KV-cache implementation, an Inductor path, SDPA,
 \code{flash\_attn\_with\_kvcache}, FlashInfer, and FlashAttention prefill at
 query length 1. A \emph{cell} is one configuration, defined by regime, batch,
@@ -211,8 +211,8 @@ checked on its own device and are excluded. Of the remaining attempts, 16{,}326
 were \code{UNSUPPORTED}, 1{,}590 were skipped by an out-of-memory predictor,
 950 raised a run-time error (all FlashInfer on the RTX 5090,
 Section~\ref{sec:mech}), and 151 ran out of memory despite passing the
-predictor. No correctness check failed. Bandwidth is measured on each host with
-a copy benchmark, not taken from a datasheet.
+predictor. No correctness check failed. Table~\ref{tab:avail} breaks these
+outcomes down by implementation.
 
 \begin{table}[tb]
 \centering
@@ -220,7 +220,7 @@ a copy benchmark, not taken from a datasheet.
 \setlength{\tabcolsep}{3.2pt}
 \begin{tabular}{lllrrr}
 \toprule
-GPU & cc & family & BW & \shortstack{planned\\repeats} & cells \\
+GPU & cc & family & mem.\ BW & \shortstack{planned\\repeats} & cells \\
  & & & (GB/s) & pre/dec & pre/dec \\
 \midrule
 A100     & 8.0  & Ampere    & 1732.8 & 5/5 & 144/192 \\
@@ -231,11 +231,49 @@ H100     & 9.0  & Hopper    & 2979.7 & 5/5 & 159/244 \\
 RTX 5090 & 12.0 & Blackwell & 1517.5 & 5/5 & 144/192 \\
 \bottomrule
 \end{tabular}
-\caption{GPUs and coverage. Bandwidth comes from a copy benchmark on each host.
+\caption{GPUs and coverage. Memory bandwidth is measured on each GPU by timing a
+512~MB device-to-device copy and counting bytes read and written.
 \emph{Planned repeats} are separate process launches per configuration, for
 prefill and decode. L40 kept a median of two usable repeats. \emph{Cells} counts
 configurations with at least one eligible measurement.}
 \label{tab:devices}
+\end{table}
+
+\begin{table}[tb]
+\centering
+\small
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lrrrr}
+\toprule
+implementation & completed & unsupp. & OOM & error \\
+\midrule
+\multicolumn{5}{l}{\emph{prefill}} \\
+PyTorch reference             & 3148 & 0    & 851 & 0 \\
+\code{torch.compile}          & 3209 & 0    & 790 & 0 \\
+\quad no pattern matching     & 121  & 3873 & 5   & 0 \\
+\quad \code{torch.where} mask & 121  & 3873 & 5   & 0 \\
+SDPA memory-efficient         & 3969 & 30   & 0   & 0 \\
+SDPA FlashAttention           & 3999 & 0    & 0   & 0 \\
+SDPA cuDNN                    & 3999 & 0    & 0   & 0 \\
+Triton tutorial kernel        & 3999 & 0    & 0   & 0 \\
+FlashAttention-2              & 3999 & 0    & 0   & 0 \\
+FlashAttention-3              & 795  & 3204 & 0   & 0 \\
+\midrule
+\multicolumn{5}{l}{\emph{decode}} \\
+PyTorch reference             & 5530 & 0    & 10  & 0 \\
+\code{torch.compile}          & 194  & 5346 & 0   & 0 \\
+SDPA                          & 5535 & 0    & 5   & 0 \\
+FlashAttention-2 KV cache     & 5515 & 0    & 25  & 0 \\
+FlashAttention-2, $q=1$       & 5515 & 0    & 25  & 0 \\
+FlashInfer                    & 4565 & 0    & 25  & 950 \\
+\bottomrule
+\end{tabular}
+\caption{Attempt outcomes by implementation, summed over the six GPUs.
+\emph{Unsupp.} counts configurations the implementation does not support.
+\emph{OOM} counts attempts skipped by the memory predictor or that ran out of
+memory. FlashAttention-3 ran only on H100, and all FlashInfer errors are on the
+RTX 5090.}
+\label{tab:avail}
 \end{table}
 
 \section{Dispatch validation}
@@ -301,7 +339,7 @@ Keeping only separated comparisons pulls them apart. Prefill changes winner in
 27 of 64 comparisons (42.2\%) and decode in 29 of 289 (10.0\%). Restricting each
 pair to the backends both GPUs ran, and recomputing winners in that set, gives
 33 of 72 for prefill and 27 of 289 for decode. This restriction removes
-backends that only one GPU could run, such as FlashAttention 3, and it does not
+backends that only one GPU could run, such as FlashAttention-3, and it does not
 lower the prefill rate. Figure~\ref{fig:transfer} shows what reusing a choice costs.
 The median reused choice is 1.002$\times$ the target's best in prefill and
 1.000$\times$ in decode, but the 95th percentiles are 1.61$\times$ and
@@ -318,23 +356,24 @@ there, so we do not attribute the high rate to architecture.
 \centering
 \small
 \setlength{\tabcolsep}{1.5pt}
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{llrrrr}
 \toprule
  & & \multicolumn{2}{c}{all shared cells} & \multicolumn{2}{c}{separated both} \\
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}
-device set & regime & n & flip & n & flip [95\% CI] \\
+GPU pairs & regime & n & changed & n & changed [95\% CI] \\
 \midrule
-\multirow{2}{*}{Amp/Ada/Hop} & prefill & 720 & 66.0\% & 64 & 42.2\% [29, 53] \\
+\multirow{2}{*}{Ampere/Ada/Hopper} & prefill & 720 & 66.0\% & 64 & 42.2\% [29, 53] \\
                              & decode  & 1916 & 52.1\% & 289 & 10.0\% [5, 15] \\
 \midrule
-\multirow{2}{*}{5090 vs rest} & prefill & 360 & 65.8\% & 30 & 53.3\% [30, 74] \\
+\multirow{2}{*}{RTX 5090 pairs} & prefill & 360 & 65.8\% & 30 & 53.3\% [30, 74] \\
                               & decode  & 959 & 78.4\% & 85 & 74.1\% [56, 90] \\
 \bottomrule
-\end{tabular}
-\caption{Winner-change rate pooled over GPU pairs. \emph{Amp/Ada/Hop} is the ten
-pairs among A10, A100, L40, L40S and H100, and \emph{5090 vs rest} is the five
-pairs with the RTX 5090. \emph{n} is the number of pair comparisons and
-\emph{flip} the share with a different winner. The right columns keep only
+\end{tabular}}
+\caption{Winner-change rate pooled over GPU pairs. \emph{Ampere/Ada/Hopper} is
+the ten pairs among A10, A100, L40, L40S and H100, and \emph{RTX 5090 pairs} is
+the five pairs with the RTX 5090. \emph{n} is the number of pair comparisons and
+\emph{changed} the share with a different winner. The right columns keep only
 configurations separated on both GPUs. Intervals are a 2000-draw cluster
 bootstrap over configurations, since one configuration appears in several
 pairs.}
@@ -355,78 +394,16 @@ explain the failure. Without FlashInfer, the RTX 5090's decode winner is
 115.7~\us{}.
 
 \paragraph{Library builds.} Table~\ref{tab:prov} lists which GPU targets each
-installed library was built for. Over forward prefill, FlashAttention 2 wins 35
+installed library was built for. Over forward prefill, FlashAttention-2 wins 35
 of 72 cells on A100 and 13 of 72 on the RTX 5090, both of which have native
 code, but 2 of 72 on L40 and none on A10 or L40S, which run A100 code under
-binary compatibility. On H100 it wins none of 87, and FlashAttention 3 wins 48.
+binary compatibility. On H100 it wins none of 87, and FlashAttention-3 wins 48.
 The pattern matches the packaging, but we did not rebuild flash-attn for the
 missing targets, so we do not claim the packaging causes it. FlashInfer
 compiles its kernels at run time, so its coverage depends on the host toolkit.
 Every other library in the audit ships native sm\_120 code built with the same
 CUDA 12.8, so the toolkit can target sm\_120 and the FlashInfer failure remains
 unexplained.
-
-\section{Threats to validity}
-\label{sec:threats}
-
-\paragraph{One host per GPU.} Each GPU was measured on the host that had it, so
-device differences are mixed with host differences. A100 prefill was
-re-measured on a second host because the first run kept too few repeats. Every
-ranking is formed within one GPU and one regime, so no comparison mixes the two
-hosts, and their copy bandwidths agree within 0.05\%. A10 and A100 decode ran a
-few days before the other runs, on an earlier harness version whose timing
-code is identical.
-
-\paragraph{Small separated samples.} Requiring a separated winner on both GPUs
-leaves 64 of 720 prefill and 289 of 1{,}916 decode comparisons among Ampere, Ada
-and Hopper GPUs. This is the right filter for a ranking claim, but it means the
-headline rates rest on tens to a few hundred comparisons. One of the 11{,}835
-usable measurements has a single launch and cannot be separated. L40 has fewer
-repeats than the other GPUs, and Appendix~\ref{app:reps} shows the headline
-rates barely move without it.
-
-\paragraph{Untraced rows.} 33.5\% of \code{OK} attempts have no kernel trace,
-and 26 of 651 dispatch classes have no traced row. The 0.449\% mismatch rate
-applies to traced rows only.
-
-\paragraph{Modelled quantities.} Effective KV bandwidth is an analytic byte
-count divided by measured latency, not measured DRAM traffic, so its ratio to
-the copy benchmark does not show saturation.
-
-\paragraph{What was not measured.} The hosts we used did not allow Nsight
-Compute or Nsight Systems, so we make no occupancy, cache or counter-based
-roofline claims. We tested one combination of torch, flash-attn and FlashInfer,
-and a different version is a different experiment. We time a single attention
-call, not end-to-end serving latency, on GPUs from one vendor.
-
-\section{Conclusion}
-
-In the tested configurations, the fastest forward-prefill backend changed
-across Ampere, Ada and Hopper GPUs much more often than the fastest decode
-backend. The median cost of reusing a choice was small, but the upper tail and
-the cases where the choice could not run at all mean the median is not enough
-to pick a backend. Backend choices should be measured on the GPU and workload
-they will serve, with uncertainty and coverage reported.
-
-\appendix
-\section{Repeat-count sensitivity}
-\label{app:reps}
-L40 had three planned repeats instead of five and kept a median of two, so its
-intervals are the widest. Dropping it moves the separation rate from 28.6\% to
-30.1\% for forward prefill and from 34.0\% to 34.2\% for decode.
-
-\section{Backend availability}
-\label{app:avail}
-Table~\ref{tab:avail} lists which comparisons were possible.
-
-\input{tab_avail}
-
-\section{Library builds and GPU support}
-\label{app:prov}
-The audit shows which GPU targets the installed libraries were built for. It
-shows what could run, not why anything was fast. CUDA lets code built for a
-lower minor compute capability run on a higher one within the same major
-version.
 
 \begin{table}[tb]
 \centering
@@ -442,18 +419,56 @@ libtorch\_cuda     & SASS & SASS & SASS & SASS & SASS & none \\
 cuDNN engines      & SASS & SASS & \emph{86} & SASS & SASS & sm\_120 \\
 cuBLAS             & SASS & SASS & \emph{86} & SASS & SASS & sm\_120 \\
 flashinfer 0.6.18  & JIT & JIT & JIT & JIT & none & n/a \\
-flash-attn 3       & n/f & n/f & n/f & n/f & n/f & n/f \\
 \bottomrule
 \end{tabular}}
-\caption{Binary targets of the installed libraries, from \code{cuobjdump}.
-SASS means native code is present. An italic number means no native code
-shipped and the GPU runs code built for that older architecture. \emph{PTX} is
-embedded PTX the driver can compile. JIT means the library builds kernels at
-run time, \emph{none} means no kernel was produced for that target, and
-\emph{n/f} means the audit did not find the library. FlashAttention 3 did run on
-H100, so its n/f row is a gap in the audit.}
+\caption{GPU targets in the installed libraries, from \code{cuobjdump}. SASS
+means native code for that architecture is present. An italic number means no
+native code shipped and the GPU runs code built for that older architecture,
+which CUDA allows within one major compute capability. \emph{PTX} is the
+embedded PTX the driver can compile for newer GPUs. JIT means the library
+compiles its kernels at run time, and \emph{none} means no kernel was produced
+for that target.}
 \label{tab:prov}
 \end{table}
+
+\section{Threats to validity}
+\label{sec:threats}
+
+\paragraph{One host per GPU.} Each GPU was measured on the host that had it, so
+device differences are mixed with host differences. A100 prefill was
+re-measured on a second host because the first run kept too few repeats. Every
+ranking is formed within one GPU and one regime, so no comparison mixes the two
+hosts, and their measured memory bandwidths agree within 0.05\%. A10 and A100 decode ran a
+few days before the other runs, on an earlier harness version whose timing
+code is identical.
+
+\paragraph{Small separated samples.} Requiring a separated winner on both GPUs
+leaves 64 of 720 prefill and 289 of 1{,}916 decode comparisons among Ampere, Ada
+and Hopper GPUs. This is the right filter for a ranking claim, but it means the
+headline rates rest on tens to a few hundred comparisons. One of the 11{,}835
+usable measurements has a single launch and cannot be separated. L40 kept a
+median of two repeats against five elsewhere, so its intervals are the widest.
+Dropping it moves the separation rate from 28.6\% to 30.1\% for prefill and from
+34.0\% to 34.2\% for decode.
+
+\paragraph{Untraced rows.} 33.5\% of \code{OK} attempts have no kernel trace,
+and 26 of 651 dispatch classes have no traced row. The 0.449\% mismatch rate
+applies to traced rows only.
+
+\paragraph{What was not measured.} The hosts we used did not allow Nsight
+Compute or Nsight Systems, so we make no occupancy, cache or counter-based
+roofline claims. We tested one combination of torch, flash-attn and FlashInfer,
+and a different version is a different experiment. We time a single attention
+call, not end-to-end serving latency, on GPUs from one vendor.
+
+\section{Conclusion}
+
+In the tested configurations, the fastest forward-prefill backend changed
+across Ampere, Ada and Hopper GPUs much more often than the fastest decode
+backend. The median cost of reusing a choice was small, but the upper tail and
+the cases where the choice could not run at all mean the median is not enough
+to pick a backend. Backend choices should be measured on the GPU and workload
+they will serve, with uncertainty and coverage reported.
 
 \bibliography{custom}
 

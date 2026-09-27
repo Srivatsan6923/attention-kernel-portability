@@ -28,6 +28,7 @@ import DecodeLatency from '../components/charts/DecodeLatency.astro';
 import DecodeWinnerMap from '../components/charts/DecodeWinnerMap.astro';
 import PortabilityFlip from '../components/charts/PortabilityFlip.astro';
 import web from '../../public/data/web.json';
+import { nameOf } from '../lib/backends';
 
 export const pct = (x, d = 1) => `${(100 * x).toFixed(d)}%`;
 export const n0 = (x) => x.toLocaleString('en-US');
@@ -103,7 +104,7 @@ Most configurations did not have a clearly fastest backend. Only 128 of 447 pref
 
 ### Experimental setup
 
-<ResearchTable caption={`The ${web.devices.length} GPUs. Bandwidth is a copy benchmark run on each host. Repeats is the median number of separate process launches per configuration. L40 had fewer repeats than the others, so its intervals are wider.`}>
+<ResearchTable caption={`The ${web.devices.length} GPUs. Memory bandwidth is measured on each GPU by timing a 512 MB device-to-device copy. Repeats is the median number of separate process launches per configuration. L40 had fewer repeats than the others, so its intervals are wider.`}>
 
 <table>
 	<thead>
@@ -114,7 +115,7 @@ Most configurations did not have a clearly fastest backend. Only 128 of 447 pref
 			<th class="num">SMs</th>
 			<th class="num">Memory (GB)</th>
 			<th class="num">L2 (MB)</th>
-			<th class="num">Bandwidth (GB/s)</th>
+			<th class="num">Memory bandwidth (GB/s)</th>
 			<th class="num">Repeats</th>
 		</tr>
 	</thead>
@@ -224,7 +225,7 @@ A value of 1.20 means the transferred choice is 20% slower than the best option 
 <ResearchFigure
 	number={4}
 	id="fig-prefill-speedup"
-	title="Prefill speedup over SDPA-flash by batch and sequence length"
+	title="Prefill speedup over SDPA FlashAttention by batch and sequence length"
 	dataHref="data/web.json"
 	wide={false}
 >
@@ -267,7 +268,7 @@ Decode was measured with and without CUDA Graphs. The figures use eager executio
 			At batch 1, FlashInfer is fastest at N=512 ({sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', 512))} us) but reaches {sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN))} us at N={n0(longN)}, which is {(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN) / at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN)).toFixed(1)} times the FlashAttention latency. The best decode backend on one GPU depends on context length.
 		</li>
 		<li>
-			At batch 32 and N={n0(longN)} on H100, FlashAttention takes {sig(at('decode_latency_b32', 'H100', 'D3-fa-kvcache', longN))} us and reaches {sig(at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN))} GB/s of modelled KV traffic. That is {((100 * at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN)) / dev('H100').bw_gbs).toFixed(0)}% of the measured copy bandwidth.
+			At batch 32 and N={n0(longN)} on H100, FlashAttention takes {sig(at('decode_latency_b32', 'H100', 'D3-fa-kvcache', longN))} us and reaches {sig(at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN))} GB/s of modelled KV traffic. That is {((100 * at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN)) / dev('H100').bw_gbs).toFixed(0)}% of the measured memory bandwidth.
 		</li>
 	</Observation>
 </ResearchFigure>
@@ -321,7 +322,7 @@ Every attempt ends in one of five states. `OK` is a clean timed run. `UNSUPPORTE
 	<tbody>
 		{IMPLS.map((im) => (
 			<tr>
-				<td><code>{im}</code></td>
+				<td>{nameOf(im)}</td>
 				<td class="num">{n0(covOf(im, 'OK'))}</td>
 				<td class="num">{n0(covOf(im, 'UNSUPPORTED'))}</td>
 				<td class="num">{n0(covOf(im, 'OOM_PREDICTED'))}</td>
@@ -337,7 +338,7 @@ Every attempt ends in one of five states. `OK` is a clean timed run. `UNSUPPORTE
 
 ### Dispatch checks
 
-For each run I recorded which kernel actually executed. Among probed runs, {web.headline.dispatch_mismatch_pct.toFixed(3)}% ran a different kernel than the one requested. {(100 - web.headline.probed_pct).toFixed(1)}% of runs were not probed, mostly on the library paths. `P4-fa2` has {n0(flowN('P4-fa2', 'unprobed'))} unprobed runs and {n0(flowN('P4-fa2', 'flash-attn'))} confirmed as `flash-attn`.
+For each run I recorded which kernel actually executed. Among probed runs, {web.headline.dispatch_mismatch_pct.toFixed(3)}% ran a different kernel than the one requested. {(100 - web.headline.probed_pct).toFixed(1)}% of runs were not probed, mostly on the library paths. FlashAttention-2 has {n0(flowN('P4-fa2', 'unprobed'))} unprobed runs and {n0(flowN('P4-fa2', 'flash-attn'))} confirmed as flash-attn kernels.
 
 <ResearchTable long caption="Observed kernel per implementation, in runs.">
 
@@ -352,7 +353,7 @@ For each run I recorded which kernel actually executed. Among probed runs, {web.
 	<tbody>
 		{IMPLS.filter((im) => flowsOf(im).length > 0).map((im) => (
 			<tr>
-				<td><code>{im}</code></td>
+				<td>{nameOf(im)}</td>
 				<td>
 					{flowsOf(im)
 						.filter((f) => f.observed !== 'unprobed')
@@ -413,7 +414,7 @@ Every implementation was checked against the PyTorch reference on a sample of co
 	<tbody>
 		{web.correctness.map((c) => (
 			<tr>
-				<td><code>{c.impl}</code></td>
+				<td>{nameOf(c.impl)}</td>
 				<td class="num">{n0(c.n)}</td>
 				<td class="num">{c.max_abs.toFixed(3)}</td>
 				<td class="num">{sig(c.max_rel)}</td>
@@ -429,7 +430,7 @@ Every implementation was checked against the PyTorch reference on a sample of co
 
 ### Code sources
 
-I wrote the PyTorch reference (`P0-naive`, `D0-naive-kv`), its `torch.compile` variants (`P1-inductor*`, `D1-inductor`) and the SDPA call sites that force one backend each (`P2b`, `P2c`, `P2d`, `D2-sdpa`). `P3-triton` is the Triton tutorial kernel with a small BF16 change. `P4-fa2`, `P4h-fa3`, `D3-fa-kvcache`, `D6-fa-prefill-at-1` and `D4-flashinfer` call the unmodified flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer} libraries.
+I wrote the PyTorch reference, its `torch.compile` variants and the SDPA call sites that force one backend each. The Triton kernel is the Triton fused-attention tutorial kernel with a small BF16 change. FlashAttention-2, FlashAttention-3 and FlashInfer are the unmodified flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer} libraries.
 
 </details>
 

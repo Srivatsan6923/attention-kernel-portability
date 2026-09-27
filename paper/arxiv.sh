@@ -30,7 +30,7 @@ cp "$HERE"/../site/public/figures/*.pdf "$BBL/site/public/figures/"
 [ -f "$BBL/paper/main.bbl" ] || { echo "no main.bbl was produced" >&2; exit 1; }
 
 # 2. The submission itself, in one flat directory.
-cp "$HERE"/main.tex "$HERE"/tab_avail.tex "$HERE"/acl.sty "$HERE"/acl_natbib.bst \
+cp "$HERE"/main.tex "$HERE"/acl.sty "$HERE"/acl_natbib.bst \
    "$HERE"/custom.bib "$OUT/src"/
 cp "$BBL/paper/main.bbl" "$OUT/src"/
 cp "$HERE"/../site/public/figures/figA_separation.pdf \

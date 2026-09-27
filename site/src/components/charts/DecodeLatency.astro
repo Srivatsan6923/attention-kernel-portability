@@ -132,7 +132,7 @@ const uid = 'decode-latency';
 
 <script>
 	import * as Plot from '@observablehq/plot';
-	import { colourOf, BACKEND_LABEL, IMPL_BACKEND } from '../../lib/backends';
+	import { colourOf, nameOf } from '../../lib/backends';
 
 	const root = document.getElementById('decode-latency');
 	if (root) setup(root as HTMLElement);
@@ -194,7 +194,7 @@ const uid = 'decode-latency';
 
 			note.hidden = !isBw;
 			note.textContent = isBw
-				? 'The dashed line in each panel is that GPU’s measured copy bandwidth. Effective KV bandwidth is the modelled KV size divided by step time. A point above the line means part of the cache was served from L2.'
+				? 'The dashed line in each panel is that GPU’s measured memory bandwidth. Effective KV bandwidth is the modelled KV size divided by step time. A point above the line means part of the cache was served from L2.'
 				: '';
 		}
 
@@ -271,7 +271,7 @@ const uid = 'decode-latency';
 					el.innerHTML =
 						`<svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" ` +
 						`stroke="${colourOf(impl)}" stroke-width="2"${dash}></line></svg>` +
-						`<span>${impl} <span style="color:var(--text-secondary)">(${BACKEND_LABEL[IMPL_BACKEND[impl]]})</span></span>`;
+						`<span>${nameOf(impl)}</span>`;
 					return el;
 				}),
 			);

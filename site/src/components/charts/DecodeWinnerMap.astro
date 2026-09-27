@@ -4,6 +4,7 @@
 import web from '../../../public/data/web.json';
 import ResearchFigure from '../ResearchFigure.astro';
 import Observation from '../Observation.astro';
+import { nameOf } from '../../lib/backends';
 
 interface Props {
 	number?: number;
@@ -66,7 +67,7 @@ const s = web.decode_slice;
 	<Observation slot="observations">
 		<li>
 			Each cell shows the implementation with the lowest median latency at that batch and KV length.{' '}
-			{impls.length} implementations ({impls.join(', ')}) win at least one of the {rows.length} cells.
+			{impls.length} implementations ({impls.map(nameOf).join(', ')}) win at least one of the {rows.length} cells.
 			Only {pct1(dec.separated)}% of the full decode grid has a clear winner, so a colour change between
 			neighbouring cells is often not a real difference. Hover a cell for its latency.
 		</li>
@@ -94,6 +95,7 @@ const s = web.decode_slice;
 
 <script>
 	import * as Plot from '@observablehq/plot';
+	import { nameOf } from '../../lib/backends';
 
 	const css = (name: string) =>
 		getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -137,7 +139,7 @@ const s = web.decode_slice;
 					inset: 0.75,
 					stroke: bg,
 					strokeWidth: 0.75,
-					title: (d: any) => `${d.impl}\n${d.us.toFixed(1)} µs median\nbatch ${d.y}, KV ${d.N}`,
+					title: (d: any) => `${nameOf(d.impl)}\n${d.us.toFixed(1)} µs median\nbatch ${d.y}, KV ${d.N}`,
 				}),
 				Plot.frame({ stroke: border, strokeWidth: 0.75 }),
 			],

@@ -1,7 +1,7 @@
 # Article site
 
-The Astro source for the project article. Every number on the page is read
-from `public/data/web.json`, which `python -m akp.webdata` writes.
+The Astro source for the project article. The page reads its data from
+`public/data/web.json`, which `python -m akp.webdata` writes.
 
 | Command | Action |
 | :-- | :-- |

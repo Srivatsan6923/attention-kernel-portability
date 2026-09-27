@@ -27,6 +27,7 @@ const { id = 'fig-prefill-latency' } = Astro.props;
 
 <script>
 	import * as Plot from '@observablehq/plot';
+	import { nameOf } from '../../lib/backends';
 
 	// The same seven family colours as every other chart.
 	const FAMILY: [RegExp, string, string][] = [
@@ -154,15 +155,15 @@ const { id = 'fig-prefill-latency' } = Astro.props;
 	function legend(root: HTMLElement, impls: string[], dashOf: Map<string, string>) {
 		root.replaceChildren(
 			...impls.map((impl) => {
-				const [, colour, family] = familyOf(impl);
+				const [, colour] = familyOf(impl);
 				const dash = dashOf.get(impl);
 				const item = document.createElement('span');
 				item.className = 'legend-item';
-				item.title = `${impl} (${family})`;
+				item.title = nameOf(impl);
 				item.innerHTML =
 					`<svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" ` +
 					`stroke="${colour}" stroke-width="1.6"${dash ? ` stroke-dasharray="${dash}"` : ''}/></svg>` +
-					`<span>${impl}</span>`;
+					`<span>${nameOf(impl)}</span>`;
 				return item;
 			})
 		);

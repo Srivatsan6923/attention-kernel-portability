@@ -115,7 +115,7 @@ def gpu_order(d: dict) -> list:
 
 
 def peak_bw(d: dict) -> dict:
-    """Measured copy bandwidth per GPU from the run manifest."""
+    """Measured memory bandwidth per GPU from the run manifest."""
     env = (d["summary"] or {}).get("environment") or {}
     return {g: m.get("measured_peak_bw_gbs") for g, m in env.items()
             if m.get("measured_peak_bw_gbs")}
@@ -412,7 +412,7 @@ def fig3_decode_bandwidth(d: dict, out: str) -> str:
                       markersize=3, linewidth=1.0, label=i)
                for i in sorted(set(sub.implementation))]
     handles.append(Line2D([], [], color="#000000", linestyle="--",
-                          label="measured peak copy bandwidth (this host)"))
+                          label="measured memory bandwidth (this host)"))
     fig.legend(handles=handles, loc="outside center right", frameon=False)
     fig.suptitle("Decode: effective KV-cache bandwidth vs KV length (%s)\n"
                  "bytes = KV actually streamed / measured latency, the dashed "
@@ -844,7 +844,7 @@ def numbers(d: dict, wins: pd.DataFrame, prov: pd.DataFrame) -> dict:
                 "statistical_and_practical_rate":
                     _r((s.sig & s.practical).sum() / n) if n else None}
 
-    # Peak is the copy bandwidth measured on each host.
+    # Peak is the memory bandwidth measured on each host.
     dec = ok[(ok.regime == "decode") & ok.eff_bw_gbs.notna()]
     out["decode_bandwidth"] = {"_note": "utilisation above 1 means the KV slice "
                                "fit in cache and was not streamed from HBM; the "

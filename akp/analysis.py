@@ -87,7 +87,7 @@ def derive(df: pd.DataFrame, env: dict | None = None) -> pd.DataFrame:
     df["us_per_token"] = np.where(pre, np.nan, df.median_us)
     df["tokens_per_s"] = np.where(pre, np.nan, df.batch / (df.median_us * 1e-6))
 
-    # Fraction of the device's measured copy bandwidth.
+    # Fraction of the device's measured memory bandwidth.
     def _peak(g):
         m = (env or {}).get(g, {})
         return m.get("measured_peak_bw_gbs") or m.get("theoretical_bw_gbs")

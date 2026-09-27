@@ -2,9 +2,8 @@
 
     python -m akp.webdata results/processed site/public/data/web.json
 
-Every number on the site comes from this file. The script only selects slices,
-rounds and reshapes, and defines no metrics of its own. Slices are picked by
-coverage, and the chosen slice is stored with the data so captions can name it.
+The script selects slices, rounds and reshapes, and computes no new metrics.
+The chosen slice is stored with the data so captions can name it.
 """
 import argparse
 import json

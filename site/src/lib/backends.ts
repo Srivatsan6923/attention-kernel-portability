@@ -51,3 +51,25 @@ export function colourOf(impl: string): string {
 	if (!backend) throw new Error(`No backend colour mapped for implementation "${impl}"`);
 	return BACKEND_COLOR[backend];
 }
+
+// Readable name for each implementation id, used wherever an id is shown.
+export const IMPL_NAME: Record<string, string> = {
+	'P0-naive': 'PyTorch reference',
+	'P1-inductor': 'torch.compile',
+	'P1-inductor-nofuse': 'torch.compile, no pattern matching',
+	'P1-inductor-where': 'torch.compile, torch.where mask',
+	'P2b-sdpa-mem-eff': 'SDPA memory-efficient',
+	'P2c-sdpa-flash': 'SDPA FlashAttention',
+	'P2d-sdpa-cudnn': 'SDPA cuDNN',
+	'P3-triton': 'Triton tutorial kernel',
+	'P4-fa2': 'FlashAttention-2',
+	'P4h-fa3': 'FlashAttention-3',
+	'D0-naive-kv': 'PyTorch reference',
+	'D1-inductor': 'torch.compile',
+	'D2-sdpa': 'SDPA',
+	'D3-fa-kvcache': 'FlashAttention-2 KV cache',
+	'D4-flashinfer': 'FlashInfer',
+	'D6-fa-prefill-at-1': 'FlashAttention-2, q=1',
+};
+
+export const nameOf = (impl: string): string => IMPL_NAME[impl] ?? impl;
