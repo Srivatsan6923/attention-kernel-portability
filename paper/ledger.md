@@ -8,14 +8,14 @@ Every number quoted in the paper, README and article comes from here.
 | Fraction of forward-prefill configurations with a separated fastest backend | regime=prefill, mode=fwd, >=2 eligible backends, all devices pooled | 128 / 447 | 28.6% [24, 33] | all devices |
 | Fraction of decode configurations with a separated fastest backend | regime=decode, >=2 eligible backends, all devices pooled | 409 / 1203 | 34.0% [31, 37] | all devices |
 | Same, forward-plus-backward prefill (appendix population, not an inference result) | regime=prefill, mode=fwd_bwd | 114 / 432 | 26.4% [22, 31] | all devices |
-| Winner-flip rate, forward prefill, pairs among Ampere/Ada/Hopper | native backend set; both devices separated | 27 / 64 | 42.2% [29, 53] | 656 comparisons excluded as not separated |
-| Winner-flip rate, decode, pairs among Ampere/Ada/Hopper | native backend set; both devices separated | 29 / 289 | 10.0% [5, 15] | 1627 comparisons excluded as not separated |
+| Winner-flip rate, forward prefill, pairs among Ampere/Ada/Hopper | native backend set, both devices separated | 27 / 64 | 42.2% [29, 53] | 656 comparisons excluded as not separated |
+| Winner-flip rate, decode, pairs among Ampere/Ada/Hopper | native backend set, both devices separated | 29 / 289 | 10.0% [5, 15] | 1627 comparisons excluded as not separated |
 | Winner-flip rate, forward prefill, common backend set | backends shared by both devices on that workload, winners and separation re-derived | 33 / 72 | 45.8% [33, 57] | 648 comparisons excluded as not separated |
 | Winner-flip rate, decode, common backend set | backends shared by both devices on that workload, winners and separation re-derived | 27 / 289 | 9.3% [5, 15] | 1627 comparisons excluded as not separated |
-| Winner-flip rate, forward prefill, RTX 5090 vs each other device | native backend set; both devices separated | 16 / 30 | 53.3% [30, 74] | 330 comparisons excluded as not separated |
-| Winner-flip rate, decode, RTX 5090 vs each other device | native backend set; both devices separated | 63 / 85 | 74.1% [56, 90] | 874 comparisons excluded as not separated |
-| Cost of transferring the source device's forward-prefill choice | separated source winner; native set; all ordered device pairs | 505 costed / 590 source choices | median 1.002x, p95 1.610x | 14.4% unavailable on target |
-| Cost of transferring the source device's decode choice | separated source winner; native set; all ordered device pairs | 1687 costed / 1974 source choices | median 1.000x, p95 1.325x | 14.5% unavailable on target |
+| Winner-flip rate, forward prefill, RTX 5090 vs each other device | native backend set, both devices separated | 16 / 30 | 53.3% [30, 74] | 330 comparisons excluded as not separated |
+| Winner-flip rate, decode, RTX 5090 vs each other device | native backend set, both devices separated | 63 / 85 | 74.1% [56, 90] | 874 comparisons excluded as not separated |
+| Cost of transferring the source device's forward-prefill choice | separated source winner, native set, all ordered device pairs | 505 costed / 590 source choices | median 1.002x, p95 1.610x | 14.4% unavailable on target |
+| Cost of transferring the source device's decode choice | separated source winner, native set, all ordered device pairs | 1687 costed / 1974 source choices | median 1.000x, p95 1.325x | 14.5% unavailable on target |
 | FlashInfer decode outcomes on the RTX 5090 | implementation=D4-flashinfer, gpu=RTX 5090, all attempts | 960 attempts | ERROR 950, OOM 10 | no usable timing |
 
 ## Margin sensitivity (separation rate)

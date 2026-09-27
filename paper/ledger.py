@@ -240,11 +240,11 @@ def main():
     Q["flip_prefill_fwd_nonblackwell"] = flip_block(
         lambda a, b, c: P_FWD(a, c), NONBLK,
         "Winner-flip rate, forward prefill, pairs among Ampere/Ada/Hopper",
-        "native backend set; both devices separated")
+        "native backend set, both devices separated")
     Q["flip_decode_nonblackwell"] = flip_block(
         lambda a, b, c: DEC(a, c), NONBLK,
         "Winner-flip rate, decode, pairs among Ampere/Ada/Hopper",
-        "native backend set; both devices separated")
+        "native backend set, both devices separated")
 
     # common-set: recompute winners over the intersection, per pair and regime
     def common_flip(pred, gset, label):
@@ -294,20 +294,20 @@ def main():
             lambda a, b, c: P_FWD(a, c) and ((a in BLK) != (b in BLK)),
             sorted(gpus),
             "Winner-flip rate, forward prefill, RTX 5090 vs each other device",
-            "native backend set; both devices separated")
+            "native backend set, both devices separated")
         Q["flip_decode_blackwell"] = flip_block(
             lambda a, b, c: DEC(a, c) and ((a in BLK) != (b in BLK)),
             sorted(gpus), "Winner-flip rate, decode, RTX 5090 vs each other device",
-            "native backend set; both devices separated")
+            "native backend set, both devices separated")
 
     # --------------------------------------------------------- transfer cost
     Q["transfer_cost_prefill_fwd"] = dict(
         question="Cost of transferring the source device's forward-prefill choice",
-        subset="separated source winner; native set; all ordered device pairs",
+        subset="separated source winner, native set, all ordered device pairs",
         **transfer_cost(rec, gpus, lambda a, b, c: P_FWD(a, c)))
     Q["transfer_cost_decode"] = dict(
         question="Cost of transferring the source device's decode choice",
-        subset="separated source winner; native set; all ordered device pairs",
+        subset="separated source winner, native set, all ordered device pairs",
         **transfer_cost(rec, gpus, lambda a, b, c: DEC(a, c)))
 
     # ------------------------------------------------------ availability

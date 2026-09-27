@@ -264,7 +264,7 @@ Decode was measured with and without CUDA Graphs. The figures use eager executio
 			At batch 1 on H100 the FlashAttention KV-cache kernel barely changes with cache length. It goes from {sig(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', 512))} us at N=512 to {sig(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN))} us at N={n0(longN)}, so fixed overhead dominates.
 		</li>
 		<li>
-			FlashInfer is fastest at N=512 ({sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', 512))} us) but reaches {sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN))} us at N={n0(longN)}, which is {(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN) / at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN)).toFixed(1)}x slower than FlashAttention. The best decode backend on one GPU depends on context length.
+			At batch 1, FlashInfer is fastest at N=512 ({sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', 512))} us) but reaches {sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN))} us at N={n0(longN)}, which is {(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN) / at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN)).toFixed(1)} times the FlashAttention latency. The best decode backend on one GPU depends on context length.
 		</li>
 		<li>
 			At batch 32 and N={n0(longN)} on H100, FlashAttention takes {sig(at('decode_latency_b32', 'H100', 'D3-fa-kvcache', longN))} us and reaches {sig(at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN))} GB/s of modelled KV traffic. That is {((100 * at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN)) / dev('H100').bw_gbs).toFixed(0)}% of the measured copy bandwidth.
@@ -278,7 +278,7 @@ Fewer KV heads did not speed up every backend. At batch 1, N={n0(longN)} on H100
 
 ## Limitations
 
-- Each GPU was measured on a different host, so hardware effects are mixed with host and driver effects. A10 and A100 decode also ran on an earlier version of the benchmark harness than the other runs.
+- Each GPU was measured on a different host, so hardware effects are mixed with host effects.
 - The dispatch probe covered {web.headline.probed_pct.toFixed(1)}% of timed runs. For the rest, I cannot confirm which kernel actually ran.
 - No profiler counters were collected, so bandwidth numbers come from the byte model.
 - FlashInfer page size equals the KV length in every decode run, so the FlashInfer and FlashAttention comparison is between libraries and says nothing about paged against contiguous layouts.
@@ -291,8 +291,8 @@ The raw measurements are in release <a href="https://github.com/Srivatsan6923/at
 ```bash
 python -m akp.analysis ../akp-measurements-v1/raw --out results/processed
 python paper/ledger.py
-python -m akp.figures
-python -m akp.webdata
+python -m akp.figures_portability results/processed --out site/public/figures
+python -m akp.webdata results/processed site/public/data/web.json
 ```
 
 ## Supplementary material

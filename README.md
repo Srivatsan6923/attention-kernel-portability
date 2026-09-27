@@ -1,11 +1,11 @@
 # Attention Kernel Portability
 
 Does the fastest attention backend on one GPU stay the fastest on another?
-I benchmarked 10 prefill and 6 decode backends on six NVIDIA GPUs (A10, A100,
-L40, L40S, H100, RTX 5090), measuring forward prefill and single-token KV-cache
-decode separately.
+I benchmarked 10 prefill and 6 decode implementations on six NVIDIA GPUs (A10,
+A100, L40, L40S, H100, RTX 5090), measuring forward prefill and single-token
+KV-cache decode separately.
 
-[Paper](paper/main.pdf) · [Result ledger](paper/ledger.md)
+[Paper](paper/main.pdf) · [Article](https://srivatsan6923.github.io/projects/attention-kernel-portability/) · [Result ledger](paper/ledger.md)
 
 ## Results
 
@@ -14,16 +14,16 @@ the lower bound of a 95% bootstrap interval on that ratio is above 1.
 
 | | Forward prefill | Decode |
 |---|---:|---:|
-| Configurations with a winner meeting that rule | 128/447 (28.6%) | 409/1,203 (34.0%) |
+| Configurations with a winner by that rule | 128/447 (28.6%) | 409/1,203 (34.0%) |
 | Of those, winner changes across Ampere/Ada/Hopper | 27/64 (42.2%) | 29/289 (10.0%) |
-| Median cost of carrying the source GPU's choice | 1.002× | 1.000× |
+| Median cost of reusing the source GPU's choice | 1.002× | 1.000× |
 | 95th percentile of that cost | 1.610× | 1.325× |
 
-Most configurations have no winner by that rule. Where there is one, the label
-changes often in prefill and rarely in decode, but carrying the wrong choice
-usually costs little at the median. The tail is where it hurts, and 85/590
-prefill and 287/1,974 decode source choices had no eligible target timing at
-all.
+Most configurations have no clear winner. Where there is one, it changes often
+between GPUs in prefill and rarely in decode. Reusing another GPU's choice
+usually costs little at the median, but the tail is large, and in 85/590
+prefill and 287/1,974 decode cases the chosen backend could not run on the
+target GPU at all.
 
 ## Smoke test
 
@@ -36,36 +36,34 @@ python -m akp.analysis results/raw
 ```
 
 This checks the pipeline, not the study. Use the pinned image in
-`env/Dockerfile`; full-run scripts are in `scripts/`.
+`env/Dockerfile`. Full-run scripts are in `scripts/`.
 
 ## Reproduce
 
-Measurements for this release are available under
-[v1.2](https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.2),
-with SHA-256 checksums and instructions for regenerating the results. Download
-the three assets there, then reproduce the analysis from recorded measurements:
+The measurements are in release
+[v1.2](https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.2)
+with SHA-256 checksums. Download the assets there, then rebuild the analysis:
 
 ```bash
 sha256sum -c SHA256SUMS.txt
 unzip akp-measurements-v1.zip
 python -m akp.analysis ../akp-measurements-v1/raw --out results/processed
 python paper/ledger.py
-python -m akp.figures && python -m akp.figures_portability && python -m akp.webdata
+python -m akp.figures_portability results/processed --out site/public/figures
+python -m akp.webdata results/processed site/public/data/web.json
 ```
 
-About two minutes on a CPU. Every tracked figure and the website's chart data
-come back byte for byte, and `DATA_README.md` lists the counts the ledger must
-print. Repeating the six-GPU collection is a separate job and needs the
-hardware.
+This takes about two minutes on a CPU. `DATA_README.md` in the release lists
+the counts the ledger should print. Collecting new measurements needs the six
+GPUs.
 
 ## Scope
 
-Latency is a single attention call with inputs already prepared: not request
-latency, tokens/s, or end-to-end TTFT. Each GPU was measured on the host that
-had it, so driver and host differences are not separated from GPU differences.
-Dispatch traces were captured for 66.5% of successful attempts; the rest are
-unknown, not verified.
+Latency is a single attention call with inputs already prepared, not request
+latency, tokens/s or end-to-end TTFT. Each GPU was measured on its own host, so
+host differences are not separated from GPU differences. Kernel traces were
+captured for 66.5% of successful runs, and the rest are unverified.
 
-The Triton path is the fused-attention tutorial kernel with a BF16 modification.
-FlashAttention and FlashInfer are the library implementations. The harness,
+The Triton path is the fused-attention tutorial kernel with a BF16 change.
+FlashAttention and FlashInfer are the unmodified libraries. The harness,
 correctness checks and analysis are mine.

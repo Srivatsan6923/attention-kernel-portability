@@ -65,7 +65,7 @@ const s = web.decode_slice;
 
 	<Observation slot="observations">
 		<li>
-			Each cell shows the implementation with the lowest median latency at that batch and KV length.
+			Each cell shows the implementation with the lowest median latency at that batch and KV length.{' '}
 			{impls.length} implementations ({impls.join(', ')}) win at least one of the {rows.length} cells.
 			Only {pct1(dec.separated)}% of the full decode grid has a clear winner, so a colour change between
 			neighbouring cells is often not a real difference. Hover a cell for its latency.
