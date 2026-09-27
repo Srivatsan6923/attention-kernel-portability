@@ -57,11 +57,8 @@ const id = 'portability-flip';
 	}
 
 	<p class="pflip-note">
-		Numbers at the end of each bar are the cells the rate was computed over. Pairs with fewer than
-		{' '}{minSep} separated cells are not drawn. Decode pairs are confounded: the A10 and A100 decode
-		rows come from a different commit and driver than the H100 and L40 rows, so a decode flip mixes
-		hardware with software provenance. Prefill is commit-homogeneous. Every rate is scoped to this
-		software snapshot (torch {web.software.torch}, CUDA {web.software.cuda}).
+		The number at the end of each bar is how many configurations the rate uses. Pairs with fewer
+		than {minSep} separated configurations are not drawn.
 	</p>
 
 	<script type="application/json" data-pflip-data set:html={JSON.stringify(panels)} />

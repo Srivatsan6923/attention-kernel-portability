@@ -4,7 +4,7 @@ eyebrow: 'ML SYSTEMS · GPU INFERENCE'
 title: Attention Kernel Portability Across GPU Architectures
 standfirst: Measuring whether an attention backend chosen on one GPU stays a good choice on another, for forward prefill and single-token KV-cache decode, under one software build.
 date: '2026-08-31'
-readTime: '19 min read'
+readTime: '9 min read'
 links:
   - label: Code
     href: https://github.com/Srivatsan6923/attention-kernel-portability
@@ -26,7 +26,6 @@ import PrefillLatency from '../components/charts/PrefillLatency.astro';
 import PrefillSpeedup from '../components/charts/PrefillSpeedup.astro';
 import DecodeLatency from '../components/charts/DecodeLatency.astro';
 import DecodeWinnerMap from '../components/charts/DecodeWinnerMap.astro';
-import Roofline from '../components/charts/Roofline.astro';
 import PortabilityFlip from '../components/charts/PortabilityFlip.astro';
 import web from '../../public/data/web.json';
 
@@ -65,97 +64,46 @@ export const prefillB = [...new Set(web.prefill_speedup.map((r) => r.B))].sort((
 export const decodeCells = [].concat(...Object.values(web.decode_winner_map));
 export const decodeN = [...new Set(decodeCells.map((r) => r.N))].sort((a, b) => a - b);
 export const decodeB = [...new Set(decodeCells.map((r) => r.y))].sort((a, b) => a - b);
-export const rlDecode = web.roofline.filter((r) => r.regime === 'decode');
-export const rlPrefill = web.roofline.filter((r) => r.regime === 'prefill');
-export const rng = (rows, k) => [Math.min(...rows.map((r) => r[k])), Math.max(...rows.map((r) => r[k]))];
 export const hkvHigh = Math.max(...web.mha_vs_gqa.map((r) => r.hkv));
 export const hkvLow = Math.min(...web.mha_vs_gqa.map((r) => r.hkv));
 export const longN = Math.max(...decodeN);
 export const longPrefillN = Math.max(...prefillN);
 
+
 <ResultStrip
 	items={[
 		{
-			value: n0(web.headline.cells),
-			label: 'GPU/configuration observations',
-			detail: `${n0(web.headline.eligible_rows)} eligible rows of ${n0(web.headline.attempt_records)} attempts, on ${web.headline.devices} GPUs`,
+			value: n0(web.headline.ok_rows),
+			label: 'Valid timed runs',
+			detail: `Out of ${n0(web.headline.attempt_records)} attempts on ${web.headline.devices} GPUs`,
 		},
 		{
 			value: `27/64`,
-			label: 'Forward-prefill winner changes, Ampere/Ada/Hopper',
-			detail: `Comparisons separated on both GPUs, pooled over ten device pairs`,
+			label: 'Prefill winner changes',
+			detail: `Separated comparisons across Ampere, Ada and Hopper GPU pairs`,
 		},
 		{
-			value: `${web.headline.dispatch_mismatch_pct.toFixed(3)}%`,
-			label: 'Dispatch mismatch, probed rows only',
-			detail: `${(100 - web.headline.probed_pct).toFixed(1)}% of rows unprobed, so their dispatch status is unknown`,
+			value: `29/289`,
+			label: 'Decode winner changes',
+			detail: `Same pairs and the same separation rule`,
 		},
 		{
-			value: `1.000x`,
-			label: 'Median cost of transferring a decode choice',
-			detail: `p95 1.32x; 287/1974 source choices had no eligible target timing`,
+			value: `1.61x`,
+			label: 'p95 cost of reusing a prefill choice',
+			detail: `Median 1.002x. Decode is 1.32x at p95`,
 		},
 	]}
 />
 
 ## Overview
 
-We benchmarked forward-prefill and single-token KV-cache attention across six
-NVIDIA GPUs spanning four architecture families and five compute capabilities.
-A fastest backend met both the 10% practical margin and the bootstrap
-separation criterion in 128 of 447 forward-prefill configurations and 409 of 1203
-decode configurations. Among eligible Ampere/Ada/Hopper comparisons the
-selected backend changed in 27 of 64 prefill comparisons and 29 of 289 decode
-comparisons. Median transfer latency ratios were close to 1 (1.002 prefill,
-1.000 decode), but the upper tails showed larger penalties (1.61 and 1.32 at the
-95th percentile). No eligible target timing existed for 85 of 590 prefill and 287
-of 1974 decode source choices. These results describe the tested workloads and
-software environments; they do not isolate GPU architecture from host and
-driver differences.
+If you pick the fastest attention backend on one GPU, is it still the fastest on another GPU, and what does it cost if it is not? I measured this for forward prefill and single-token KV-cache decode on six NVIDIA GPUs covering Ampere, Ada, Hopper and Blackwell, all under one software build.
 
-The question this sweep was built to answer is narrow: if a serving stack picks one attention implementation on the hardware it was tuned on, how much does that choice cost on a different part, and can the measurement even tell.
-
-<ResearchTable caption="What each question is answered with, and the section that carries it. Every entry is scoped to this software snapshot and to the specific kernel, GPU and regime it was measured on.">
-
-<table>
-	<thead>
-		<tr>
-			<th>Question</th>
-			<th>Measurement</th>
-			<th>Section</th>
-		</tr>
-	</thead>
-	<tbody>
-		<tr>
-			<td>Did the kernel that was requested actually run?</td>
-			<td>Per-row dispatch probe of the observed kernel flow, with an explicit unprobed category</td>
-			<td>Validity before performance</td>
-		</tr>
-		<tr>
-			<td>Is a latency difference real?</td>
-			<td>Bootstrap CI on the median plus a {thr}% practical threshold; cells failing either are unseparated</td>
-			<td>Portability</td>
-		</tr>
-		<tr>
-			<td>Does the fastest implementation carry across devices?</td>
-			<td>Winner flip rate per device pair, raw and restricted to separated cells, with both denominators</td>
-			<td>Portability</td>
-		</tr>
-		<tr>
-			<td>What does a fixed choice cost?</td>
-			<td>Source-to-target transfer latency ratio: the target's time for the source's chosen backend over the target's own best</td>
-			<td>Portability</td>
-		</tr>
-	</tbody>
-</table>
-
-</ResearchTable>
+Most configurations did not have a clearly fastest backend. Only 128 of 447 prefill and 409 of 1203 decode configurations had a winner that was at least 10% ahead of second place and statistically separated from it. Among those, the winner changed between GPUs in 27 of 64 prefill comparisons but only 29 of 289 decode comparisons. Across all GPU pairs, reusing the source GPU's choice usually cost almost nothing (median 1.002x prefill, 1.000x decode). The tail was worse, at 1.61x for prefill and 1.32x for decode at the 95th percentile.
 
 ### Experimental setup
 
-Six GPUs spanning four architecture families and five compute capabilities. Bandwidth is a copy benchmark measured in-process on that host, not a vendor figure.
-
-<ResearchTable caption={`The ${web.devices.length} devices in the sweep. Repeats is the median number of independent process launches per configuration that survived the gates; L40 was given three and kept two, every other device five, which widens L40's intervals. L40S and H100 sit on different driver builds than the rest, and A10 and A100 decode ran at an earlier commit than their prefill, both of which are confounds for anything compared across those panels.`}>
+<ResearchTable caption={`The ${web.devices.length} GPUs. Bandwidth is a copy benchmark run on each host. Repeats is the median number of separate process launches per configuration. L40 had fewer repeats than the others, so its intervals are wider.`}>
 
 <table>
 	<thead>
@@ -168,8 +116,6 @@ Six GPUs spanning four architecture families and five compute capabilities. Band
 			<th class="num">L2 (MB)</th>
 			<th class="num">Bandwidth (GB/s)</th>
 			<th class="num">Repeats</th>
-			<th>Driver</th>
-			<th>Commit</th>
 		</tr>
 	</thead>
 	<tbody>
@@ -183,8 +129,6 @@ Six GPUs spanning four architecture families and five compute capabilities. Band
 				<td class="num">{d.l2_mb.toFixed(1)}</td>
 				<td class="num">{d.bw_gbs.toFixed(0)}</td>
 				<td class="num">{d.reps}</td>
-				<td>{d.driver}</td>
-				<td>{d.sha}</td>
 			</tr>
 		))}
 	</tbody>
@@ -192,18 +136,11 @@ Six GPUs spanning four architecture families and five compute capabilities. Band
 
 </ResearchTable>
 
-The grid has two regimes. Prefill runs batch {prefillB.join(', ')} against sequence lengths {prefillN.map((n) => n0(n)).join(', ')} at head_dim {web.prefill_slice.head_dim}, {web.prefill_slice.dtype}, {web.prefill_slice.mode} only; the figures below hold batch at {web.prefill_slice.batch} unless a control says otherwise. Decode is a single-token append against a KV cache of length {decodeN.map((n) => n0(n)).join(', ')} at batch {decodeB.join(', ')}, head_dim {web.decode_slice.head_dim}, {web.decode_slice.dtype}, with {web.decode_slice.hkv} KV heads in the main slice and {hkvHigh} KV heads used only for the grouped-query comparison. {IMPLS.length} implementation ids were measured, collapsing into seven backend families, and {n0(web.headline.rows)} timed rows were collected in total.
+Prefill covers batch {prefillB.join(', ')} and sequence lengths {prefillN.map((n) => n0(n)).join(', ')}. Decode appends one token to a KV cache of length {decodeN.map((n) => n0(n)).join(', ')} at batch {decodeB.join(', ')}. The full grid also varies dtype (bf16 and fp16), head dimension (64 and 128), causal masking and, for decode, eager execution against CUDA Graphs. The figures below show a bf16, head dimension 128 slice. I measured {IMPLS.length} implementation variants from seven backend families.
 
-### How a winner is decided, and what a transfer costs
+### Winner and transfer cost
 
-Two definitions carry every number on this page.
-
-A backend counts as the winner of a configuration only if it is the fastest
-backend meeting the 10% margin and the confidence criterion: the runner-up is at
-least 10% slower, and the lower bound of a 95% bootstrap interval on that ratio
-is above 1. Writing $T_{g,c,b}$ for the median of per-launch median latencies on
-GPU $g$, configuration $c$, backend $b$, and $b_1, b_2$ for the fastest and
-second-fastest:
+A configuration has a winner only if the second-fastest backend is at least 10% slower and the lower bound of a 95% bootstrap interval on that ratio is above 1. With $T_{g,c,b}$ the median latency on GPU $g$, configuration $c$ and backend $b$, and $b_1, b_2$ the fastest and second-fastest backends,
 
 $$
 R_{g,c} = \frac{T_{g,c,b_2}}{T_{g,c,b_1}}
@@ -211,33 +148,22 @@ R_{g,c} = \frac{T_{g,c,b_2}}{T_{g,c,b_1}}
 \operatorname{Sep}(g,c) = \mathbf{1}\!\left[R_{g,c} \ge 1.10 \;\wedge\; L_{95}(R_{g,c}) > 1\right]
 $$
 
-In words: the second-fastest backend must be at least 10% slower, and the lower
-end of a 95% bootstrap interval on that ratio must still exceed 1. A
-configuration failing this rule has not been shown to have equally fast
-backends; it is one where no fastest backend could be established.
+Failing this test means the gap was too small or too noisy to call. It does not mean the backends are equally fast.
 
-The second question is what it costs to carry GPU $g$'s choice over to GPU $h$
-on the same workload:
+The transfer cost is the target GPU's time for the source GPU's pick divided by the fastest time measured on the target.
 
 $$
 C_{g \rightarrow h,\,c} = \frac{T_{h,c,\,b^{*}_{g,c}}}{\min_{b \in \mathcal{B}_{h,c}} T_{h,c,b}}
 $$
 
-In words: 1.20 means the source GPU's pick takes 20% longer than the fastest
-backend actually measured on the target. Where the source's pick has no
-eligible timing on the target the ratio is undefined, and those cases are
-counted separately rather than filled in with the target's own best.
+A value of 1.20 means the transferred choice is 20% slower than the best option on the target. When the source's pick could not run on the target, I counted the case separately instead of giving it a ratio.
 
 ## Main results
-
-A winner-change rate is interpretable only with its denominator and its separation criterion attached, so both are given with every rate below.
-
-Of {n0(web.headline.cells)} GPU/configuration observations, {pct(PF.separated)} of {PF.n} forward-prefill and {pct(DC.separated)} of {DC.n} decode have a winner separated from second place by both the bootstrap lower bound and the {thr}% practical margin. In the remainder the separation criterion was not met, which is not the same as the backends being equal. The restricted rate, computed over separated configurations only, is the number to read.
 
 <ResearchFigure
 	number={1}
 	id="fig-separation"
-	title="Separated fastest backends by GPU, forward prefill and decode"
+	title="Configurations with a separated fastest backend, by GPU"
 	dataHref="data/web.json"
 	downloadHref="figures/figA_separation.pdf"
 	wide={true}
@@ -245,14 +171,7 @@ Of {n0(web.headline.cells)} GPU/configuration observations, {pct(PF.separated)} 
 	<img src="figures/figA_separation.png" alt="Separated fastest backends by GPU" />
 	<Observation slot="observations">
 		<li>
-			<strong>Most configurations have no separated fastest backend.</strong> The
-			criterion is met on 128 of 447 forward-prefill and 409 of 1203 decode
-			configurations, pooled across six GPUs. No device clears half in both regimes.
-		</li>
-		<li>
-			Workload counts differ by GPU, so the bars describe the configurations each
-			device measured. Failing the criterion does not establish that the backends
-			are equally fast.
+			Only {pct(PF.separated)} of prefill and {pct(DC.separated)} of decode configurations have a clear winner. No GPU reaches half in both regimes.
 		</li>
 	</Observation>
 </ResearchFigure>
@@ -260,7 +179,7 @@ Of {n0(web.headline.cells)} GPU/configuration observations, {pct(PF.separated)} 
 <ResearchFigure
 	number={2}
 	id="fig-transfer"
-	title="Winner changes, and the latency cost of transferring a backend choice"
+	title="Winner changes and the cost of reusing a backend choice on another GPU"
 	dataHref="data/web.json"
 	downloadHref="figures/figB_transfer.pdf"
 	wide={true}
@@ -268,217 +187,124 @@ Of {n0(web.headline.cells)} GPU/configuration observations, {pct(PF.separated)} 
 	<img src="figures/figB_transfer.png" alt="Winner changes and transfer cost" />
 	<Observation slot="observations">
 		<li>
-			<strong>Winners change more often in forward prefill than in decode.</strong>
-			Over the five Ampere, Ada and Hopper GPUs, 27 of 64 separated forward-prefill
-			comparisons change winner against 29 of 289 in decode.
+			Across the Ampere, Ada and Hopper GPUs, the prefill winner changed in 27 of 64 comparisons (42%) and the decode winner in 29 of 289 (10%).
 		</li>
 		<li>
-			<strong>A changed winner usually costs little at the median.</strong>
-			Transferring the source GPU's choice costs a median 1.002x in prefill and
-			1.000x in decode, with 95th percentiles of 1.61x and 1.32x. 85 of 590 prefill
-			and 287 of 1974 decode source choices had no eligible target timing and are
-			counted separately; they have no measured target latency to compare.
+			Across all GPU pairs, the median cost of reusing a choice is close to 1x, but 5% of prefill transfers cost 1.61x or more. In 85 of 590 prefill and 287 of 1974 decode cases the chosen backend could not run on the target GPU at all.
 		</li>
 	</Observation>
 </ResearchFigure>
 
-
 ## Prefill
-
-Prefill is compute-shaped and commit-homogeneous: every prefill row in this sweep was analysed at commit {web.devices[0].sha}, so a difference between prefill panels is a difference of device and driver, not of harness version.
 
 <ResearchFigure
 	number={3}
 	id="fig-prefill-latency"
-	title={`Prefill median latency, achieved throughput and peak memory against sequence length, batch ${web.prefill_slice.batch}, head_dim ${web.prefill_slice.head_dim}, ${web.prefill_slice.dtype}`}
+	title={`Prefill latency, throughput and peak memory against sequence length, batch ${web.prefill_slice.batch}, head_dim ${web.prefill_slice.head_dim}, ${web.prefill_slice.dtype}`}
 	dataHref="data/web.json"
 	wide={false}
 >
 	<PrefillLatency />
 	<Observation slot="observations">
 		<li>
-			On H100 at N={n0(longPrefillN)}, FlashAttention-3 runs at {sig(at('prefill_latency', 'H100', 'P4h-fa3', longPrefillN))} us
-			against {sig(at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', longPrefillN))} us for cuDNN-backed SDPA,
-			{' '}{sig(at('prefill_latency', 'H100', 'P3-triton', longPrefillN))} us for the local Triton kernel,
-			{' '}{sig(at('prefill_latency', 'H100', 'P4-fa2', longPrefillN))} us for FlashAttention-2 and
-			{' '}{sig(at('prefill_latency', 'H100', 'P2c-sdpa-flash', longPrefillN))} us for flash-backed SDPA. The lead over
-			second place is {(((at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', longPrefillN) / at('prefill_latency', 'H100', 'P4h-fa3', longPrefillN)) - 1) * 100).toFixed(1)}%,
-			which clears the {thr}% practical threshold; most cells in this grid do not.
+			On H100 at N={n0(longPrefillN)}, FlashAttention-3 takes {sig(at('prefill_latency', 'H100', 'P4h-fa3', longPrefillN))} us. cuDNN SDPA takes {sig(at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', longPrefillN))} us, Triton {sig(at('prefill_latency', 'H100', 'P3-triton', longPrefillN))} us and FlashAttention-2 {sig(at('prefill_latency', 'H100', 'P4-fa2', longPrefillN))} us. FlashAttention-3 leads by {(((at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', longPrefillN) / at('prefill_latency', 'H100', 'P4h-fa3', longPrefillN)) - 1) * 100).toFixed(1)}%, just past the 10% threshold.
 		</li>
 		<li>
-			The ordering inverts at short sequence length. At N={n0(Math.min(...prefillN))} on the same device cuDNN-backed SDPA
-			takes {sig(at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', 256))} us and FlashAttention-3 takes
-			{' '}{sig(at('prefill_latency', 'H100', 'P4h-fa3', 256))} us, with FlashAttention-2 at
-			{' '}{sig(at('prefill_latency', 'H100', 'P4-fa2', 256))} us and the Triton kernel at
-			{' '}{sig(at('prefill_latency', 'H100', 'P3-triton', 256))} us. At this length the four are separated by tens of
-			microseconds, which is small relative to the fixed per-call work these measurements include.
+			At N={n0(Math.min(...prefillN))} the order flips. cuDNN SDPA takes {sig(at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', 256))} us against {sig(at('prefill_latency', 'H100', 'P4h-fa3', 256))} us for FlashAttention-3.
 		</li>
 		<li>
-			On A10 at N={n0(longPrefillN)} the local Triton kernel is fastest at {sig(at('prefill_latency', 'A10', 'P3-triton', longPrefillN))} us,
-			against {sig(at('prefill_latency', 'A10', 'P2d-sdpa-cudnn', longPrefillN))} us for cuDNN-backed SDPA and
-			{' '}{sig(at('prefill_latency', 'A10', 'P4-fa2', longPrefillN))} us for FlashAttention-2, a lead of
-			{' '}{(((at('prefill_latency', 'A10', 'P2d-sdpa-cudnn', longPrefillN) / at('prefill_latency', 'A10', 'P3-triton', longPrefillN)) - 1) * 100).toFixed(1)}%
-			over second place. That sits well inside the {thr}% threshold, so on this cell the two are not separated and the
-			ranking should not be used to choose between them.
+			On A10 at N={n0(longPrefillN)}, Triton ({sig(at('prefill_latency', 'A10', 'P3-triton', longPrefillN))} us) and cuDNN SDPA ({sig(at('prefill_latency', 'A10', 'P2d-sdpa-cudnn', longPrefillN))} us) are within 1% of each other, so neither counts as the winner.
 		</li>
 		<li>
-			The reference path is a memory result, not a FLOP result. On H100 at N={n0(4096)} it takes
-			{' '}{sig(at('prefill_latency', 'H100', 'P0-naive', 4096))} us against
-			{' '}{sig(at('prefill_latency', 'H100', 'P2d-sdpa-cudnn', 4096))} us for cuDNN-backed SDPA, and its peak memory is
-			{' '}{sig(at('prefill_memory', 'H100', 'P0-naive', 4096))} MB against
-			{' '}{sig(at('prefill_memory', 'H100', 'P4-fa2', 4096))} MB for FlashAttention-2. The fused kernels avoid
-			materialising the score matrix and the traffic that goes with it; they still perform the quadratic arithmetic that
-			exact attention requires.
+			The unfused PyTorch reference is limited by memory. On H100 at N=4,096 it uses {sig(at('prefill_memory', 'H100', 'P0-naive', 4096))} MB against {sig(at('prefill_memory', 'H100', 'P4-fa2', 4096))} MB for FlashAttention-2, because it stores the full score matrix.
 		</li>
 	</Observation>
 </ResearchFigure>
 
-Normalising against one baseline makes the shape of the win clearer, and the absolute latency is carried in every cell so that a large ratio on a small absolute number cannot be mistaken for a large saving.
-
 <ResearchFigure
 	number={4}
 	id="fig-prefill-speedup"
-	title="Prefill speedup over forced SDPA-flash by batch and sequence length, with absolute latency in every cell"
+	title="Prefill speedup over SDPA-flash by batch and sequence length"
 	dataHref="data/web.json"
 	wide={false}
 >
 	<PrefillSpeedup />
 	<Observation slot="observations">
 		<li>
-			The largest speedup in the grid is cuDNN-backed SDPA on L40S at batch {speed('L40S', 1, 256, 'P2d-sdpa-cudnn').B},
-			N={speed('L40S', 1, 256, 'P2d-sdpa-cudnn').N}: {speed('L40S', 1, 256, 'P2d-sdpa-cudnn').speedup.toFixed(2)}x, which is
-			{' '}{sig(speed('L40S', 1, 256, 'P2d-sdpa-cudnn').us)} us against {sig(speed('L40S', 1, 256, 'P2d-sdpa-cudnn').base_us)} us.
-			The ratio is large and the saving is
-			{' '}{sig(speed('L40S', 1, 256, 'P2d-sdpa-cudnn').base_us - speed('L40S', 1, 256, 'P2d-sdpa-cudnn').us)} us per call,
-			which is why no ratio on this page appears without its microseconds.
+			The largest speedup is cuDNN SDPA on L40S at batch 1, N=256, at {speed('L40S', 1, 256, 'P2d-sdpa-cudnn').speedup.toFixed(2)}x. In absolute terms that saves only {sig(speed('L40S', 1, 256, 'P2d-sdpa-cudnn').base_us - speed('L40S', 1, 256, 'P2d-sdpa-cudnn').us)} us per call.
 		</li>
 		<li>
-			The worst cell is the reference path on L40S at batch {speed('L40S', 1, 8192, 'P0-naive').B},
-			N={n0(speed('L40S', 1, 8192, 'P0-naive').N)}: {speed('L40S', 1, 8192, 'P0-naive').speedup.toFixed(3)}x, or
-			{' '}{sig(speed('L40S', 1, 8192, 'P0-naive').us)} us against {sig(speed('L40S', 1, 8192, 'P0-naive').base_us)} us. That
-			is the cost of materialising scores at long sequence length, and it sets the scale the colour ramp has to be clamped
-			against.
-		</li>
-		<li>
-			FlashAttention-3 reaches {speed('H100', 1, 2048, 'P4h-fa3').speedup.toFixed(2)}x on H100 at batch
-			{' '}{speed('H100', 1, 2048, 'P4h-fa3').B}, N={n0(speed('H100', 1, 2048, 'P4h-fa3').N)}
-			({sig(speed('H100', 1, 2048, 'P4h-fa3').us)} us against {sig(speed('H100', 1, 2048, 'P4h-fa3').base_us)} us), and it
-			appears on no other panel: {n0(covOf('P4h-fa3', 'UNSUPPORTED'))} of its {n0(covAll('P4h-fa3'))} rows are
-			`UNSUPPORTED` because the build declines pre-Hopper parts. It is a Hopper result, not a portable one.
+			FlashAttention-3 reaches {speed('H100', 1, 2048, 'P4h-fa3').speedup.toFixed(2)}x on H100 at batch 1, N=2,048. It runs only on H100 because the build rejects every other architecture in the set, so {n0(covOf('P4h-fa3', 'UNSUPPORTED'))} of its {n0(covAll('P4h-fa3'))} attempts were unsupported.
 		</li>
 	</Observation>
 </ResearchFigure>
 
 ## Decode
 
-Single-token decode does very little arithmetic and reads the whole cache, so the useful model is bytes rather than FLOPs. The **KV-cache footprint**, an idealised one-read byte count for a decode step, is
+Decode does little arithmetic and reads the whole KV cache, so I report it in bytes. The KV footprint for one decode step is
 
 $$
 \text{bytes} \;=\; 2 \, B \, H_{kv} \, N \, D \, s
 $$
 
-with $B$ the batch, $H_{kv}$ the number of KV heads, $N$ the KV length, $D$ the head dimension, $s$ the bytes per element (2 for bf16), and the leading factor 2 counting the K and V tensors. Effective KV bandwidth below is that byte count divided by measured time. It is
-calculated, not read from a profiler, and the byte count differs between
-backends that expand the KV cache and those that read it natively, so compare a
-backend against itself across shapes rather than against another backend at one
-shape.
+where $B$ is batch, $H_{kv}$ the number of KV heads, $N$ the KV length, $D$ the head dimension and $s$ the bytes per element. The factor 2 counts K and V. Effective bandwidth is this byte count divided by measured time. It is a model and was not read from a profiler.
 
-We measured decode both with and without CUDA Graphs. A decode kernel runs for
-tens of microseconds, so the per-call cost of launching it is a real fraction of
-the measurement; replaying a captured graph removes most of that launch cost.
-The figures below use execution without CUDA Graphs, hereafter eager, and each
-comparison uses the same execution mode on both GPUs.
-
-The A10 and A100 decode rows were collected under a different harness revision
-and driver than the H100 and L40 rows, so a panel-to-panel change mixes hardware
-with software version and cannot be attributed to architecture alone. Prefill
-has no such split.
+Decode was measured with and without CUDA Graphs. The figures use eager execution, and every comparison uses the same mode on both GPUs.
 
 <ResearchFigure
 	number={5}
 	id="fig-decode-latency"
-	title={`Single-token decode step time and effective KV bandwidth against KV length, hkv=${web.decode_slice.hkv}, head_dim=${web.decode_slice.head_dim}, ${web.decode_slice.dtype}`}
+	title={`Decode step time and effective KV bandwidth against KV length, hkv=${web.decode_slice.hkv}, head_dim=${web.decode_slice.head_dim}, ${web.decode_slice.dtype}`}
 	dataHref="data/web.json"
 	wide={false}
 >
 	<DecodeLatency />
 	<Observation slot="observations">
 		<li>
-			At batch 1 on H100 the FlashAttention KV-cache path is nearly flat in KV length, moving from
-			{' '}{sig(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', 512))} us at N=512 to
-			{' '}{sig(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN))} us at N={n0(longN)}, a factor of
-			{' '}{(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN) / at('decode_latency_b1', 'H100', 'D3-fa-kvcache', 512)).toFixed(2)}x
-			across a {longN / 512}x increase in cache length. At that batch the step is dominated by fixed cost rather than by
-			cache traffic.
+			At batch 1 on H100 the FlashAttention KV-cache kernel barely changes with cache length. It goes from {sig(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', 512))} us at N=512 to {sig(at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN))} us at N={n0(longN)}, so fixed overhead dominates.
 		</li>
 		<li>
-			FlashInfer takes the opposite shape at batch 1 on H100: {sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', 512))} us
-			at N=512, the fastest entry there, rising to {sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN))} us at
-			N={n0(longN)}, which is
-			{' '}{(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN) / at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN)).toFixed(2)}x
-			the FlashAttention path at the same point. The crossover between the two libraries sits inside the measured range, so
-			a single-token serving path picks a different winner at short and long context on one GPU.
+			FlashInfer is fastest at N=512 ({sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', 512))} us) but reaches {sig(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN))} us at N={n0(longN)}, which is {(at('decode_latency_b1', 'H100', 'D4-flashinfer', longN) / at('decode_latency_b1', 'H100', 'D3-fa-kvcache', longN)).toFixed(1)}x slower than FlashAttention. The best decode backend on one GPU depends on context length.
 		</li>
 		<li>
-			At batch 32 the ordering changes again. On H100 at N={n0(longN)} the FlashAttention KV-cache path takes
-			{' '}{sig(at('decode_latency_b32', 'H100', 'D3-fa-kvcache', longN))} us, SDPA
-			{' '}{sig(at('decode_latency_b32', 'H100', 'D2-sdpa', longN))} us, FlashInfer
-			{' '}{sig(at('decode_latency_b32', 'H100', 'D4-flashinfer', longN))} us and the reference
-			{' '}{sig(at('decode_latency_b32', 'H100', 'D0-naive-kv', longN))} us. The FlashAttention path there moves
-			{' '}{sig(at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN))} GB/s of modelled KV traffic against the
-			{' '}{dev('H100').bw_gbs.toFixed(0)} GB/s measured copy-benchmark bandwidth,
-			{' '}{((100 * at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN)) / dev('H100').bw_gbs).toFixed(0)}% of it under the
-			analytic byte model.
-		</li>
-		<li>
-			The compiled decode path barely exists as a comparison. `D1-inductor` produced {n0(covOf('D1-inductor', 'OK'))} clean
-			rows against {n0(covOf('D1-inductor', 'UNSUPPORTED'))} declined, so its line covers a thin part of the grid and the
-			points it does cover are not a general result for `torch.compile` on decode.
+			At batch 32 and N={n0(longN)} on H100, FlashAttention takes {sig(at('decode_latency_b32', 'H100', 'D3-fa-kvcache', longN))} us and reaches {sig(at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN))} GB/s of modelled KV traffic. That is {((100 * at('decode_bw_b32', 'H100', 'D3-fa-kvcache', longN)) / dev('H100').bw_gbs).toFixed(0)}% of the measured copy bandwidth.
 		</li>
 	</Observation>
 </ResearchFigure>
 
 <DecodeWinnerMap number={6} />
 
-At batch 1 and a KV length of {n0(longN)} on H100, reducing the KV-head count from {hkvHigh} to {hkvLow} reduced the native KV footprint fourfold, from {mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb.toFixed(3)} MB to {mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb.toFixed(3)} MB. FlashAttention KV-cache latency decreased from {sig(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us)} to {sig(mha('H100', hkvLow, longN, 'D3-fa-kvcache').us)} us, while FlashInfer latency increased from {sig(mha('H100', hkvHigh, longN, 'D4-flashinfer').us)} to {sig(mha('H100', hkvLow, longN, 'D4-flashinfer').us)} us. A smaller KV footprint therefore did not produce a proportional or consistent latency improvement across these backends. On H100 at N={n0(longN)}, going from {mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB of cache at {hkvHigh} KV heads to {mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB at {hkvLow} KV heads, a {(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb / mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb).toFixed(1)}x reduction in bytes, takes the FlashAttention KV-cache step from {sig(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us)} us to {sig(mha('H100', hkvLow, longN, 'D3-fa-kvcache').us)} us, a {(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us / mha('H100', hkvLow, longN, 'D3-fa-kvcache').us).toFixed(1)}x reduction in time. SDPA moves {sig(mha('H100', hkvHigh, longN, 'D2-sdpa').us)} us to {sig(mha('H100', hkvLow, longN, 'D2-sdpa').us)} us over the same change, and FlashInfer {sig(mha('H100', hkvHigh, longN, 'D4-flashinfer').us)} us to {sig(mha('H100', hkvLow, longN, 'D4-flashinfer').us)} us.
+Fewer KV heads did not speed up every backend. At batch 1, N={n0(longN)} on H100, going from {hkvHigh} to {hkvLow} KV heads cuts the cache from {mha('H100', hkvHigh, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB to {mha('H100', hkvLow, longN, 'D3-fa-kvcache').kv_mb.toFixed(0)} MB. FlashAttention improves from {sig(mha('H100', hkvHigh, longN, 'D3-fa-kvcache').us)} to {sig(mha('H100', hkvLow, longN, 'D3-fa-kvcache').us)} us, SDPA stays about the same ({sig(mha('H100', hkvHigh, longN, 'D2-sdpa').us)} to {sig(mha('H100', hkvLow, longN, 'D2-sdpa').us)} us), and FlashInfer gets slower ({sig(mha('H100', hkvHigh, longN, 'D4-flashinfer').us)} to {sig(mha('H100', hkvLow, longN, 'D4-flashinfer').us)} us).
 
-## Limitations and reproduction
+## Limitations
 
-Results cover the tested workloads and library versions. GPU, host and driver
-effects are not isolated: each device was measured on the host that had it.
-Dispatch traces were captured for 66.5% of successful attempts; the remainder
-have unknown dispatch status. Bandwidth figures use analytic byte counts rather
-than measured DRAM traffic.
+- Each GPU was measured on a different host, so hardware effects are mixed with host and driver effects. A10 and A100 decode also ran on an earlier version of the benchmark harness than the other runs.
+- The dispatch probe covered {web.headline.probed_pct.toFixed(1)}% of timed runs. For the rest, I cannot confirm which kernel actually ran.
+- No profiler counters were collected, so bandwidth numbers come from the byte model.
+- FlashInfer page size equals the KV length in every decode run, so the FlashInfer and FlashAttention comparison is between libraries and says nothing about paged against contiguous layouts.
+- Results hold for torch {web.software.torch}, CUDA {web.software.cuda}, Triton {web.software.triton}, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. Other versions may rank differently.
 
-All analysis on this page runs over the devices listed above ({web.devices.map((d) => `${d.gpu} ${d.cc}`).join(', ')}), under torch {web.software.torch}, CUDA {web.software.cuda}, Triton {web.software.triton}, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. The separate Hopper flash-attn interface package reports as {String(web.software.flash_attn_interface)}, and FlashAttention-3 rows exist on H100 only. The measurement commits are per device in the table above; A10 and A100 decode ran at an earlier one than their prefill.
+## Reproduce
 
-Measurements for this release are available under <a href="https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.2">v1.2</a>, with SHA-256 checksums and instructions for regenerating the results. Four commands then reproduce the analysis from those recorded measurements, in order:
+The raw measurements are in release <a href="https://github.com/Srivatsan6923/attention-kernel-portability/releases/tag/v1.2">v1.2</a> with checksums. These commands rebuild everything on this page from them.
 
 ```bash
 python -m akp.analysis ../akp-measurements-v1/raw --out results/processed
-python paper/ledger.py           # the frozen ledger every surface quotes
-python -m akp.figures            # static figure PDFs into site/public/figures
-python -m akp.webdata            # site/public/data/web.json, the only source this page reads
+python paper/ledger.py
+python -m akp.figures
+python -m akp.webdata
 ```
 
-Repeating the six-GPU collection is a separate job and needs the hardware. Values in the tables and figures are read from <a href="data/web.json">web.json</a> at build or run time. The summary paragraph above is written out rather than generated, so regenerating the data does not rewrite it.
 ## Supplementary material
-
-The sections below are the diagnostics behind the results above: dispatch
-evidence, correctness margins, code sources and modifications, and the full pairwise
-tables. They are here for anyone checking the work rather than reading the
-result, and nothing in the main narrative depends on reading them first.
 
 <details>
 <summary>Show diagnostics</summary>
 
-### Validity before performance
+### Run outcomes
 
-A latency table is worth nothing if the row did not run the kernel it claims. Three checks come before any timing comparison: what ran, what dispatched, and whether the output was right.
+Every attempt ends in one of five states. `OK` is a clean timed run. `UNSUPPORTED` means the library rejected the configuration. `OOM_PREDICTED` means the run was skipped because it would not fit in memory. `OOM` means it ran out of memory anyway. `ERROR` means it crashed at run time, and all {n0(web.status_counts.ERROR)} of these are FlashInfer on the RTX 5090.
 
-Outcomes are five distinct things and are kept apart. `OK` is a clean timed row. `UNSUPPORTED` means the implementation declined the configuration by design, for example FlashAttention-3 on pre-Hopper parts. `OOM_PREDICTED` means the allocation was computed in advance to exceed memory and the cell was skipped without running. `OOM` means an allocation was attempted and actually failed. `ERROR` means the call raised at run time: all {n0(web.status_counts.ERROR)} are FlashInfer on the RTX 5090. Collapsing these into one failure surface would read as instability where most of it is a documented refusal.
-
-<ResearchTable long caption={`Row outcomes by implementation, summed over all ${web.headline.devices} devices and both regimes. ${n0(web.status_counts.OK)} rows ran clean, ${n0(web.status_counts.UNSUPPORTED)} were declined by the implementation, ${n0(web.status_counts.OOM_PREDICTED)} were skipped by the memory predictor, ${n0(web.status_counts.OOM)} allocations failed at run time and ${n0(web.status_counts.ERROR)} raised a runtime error.`}>
+<ResearchTable long caption={`Run outcomes by implementation, summed over all ${web.headline.devices} GPUs.`}>
 
 <table>
 	<thead>
@@ -488,6 +314,7 @@ Outcomes are five distinct things and are kept apart. `OK` is a clean timed row.
 			<th class="num">UNSUPPORTED</th>
 			<th class="num">OOM_PREDICTED</th>
 			<th class="num">OOM</th>
+			<th class="num">ERROR</th>
 			<th class="num">Clean (%)</th>
 		</tr>
 	</thead>
@@ -499,6 +326,7 @@ Outcomes are five distinct things and are kept apart. `OK` is a clean timed row.
 				<td class="num">{n0(covOf(im, 'UNSUPPORTED'))}</td>
 				<td class="num">{n0(covOf(im, 'OOM_PREDICTED'))}</td>
 				<td class="num">{n0(covOf(im, 'OOM'))}</td>
+				<td class="num">{n0(covOf(im, 'ERROR'))}</td>
 				<td class="num">{((100 * covOf(im, 'OK')) / covAll(im)).toFixed(1)}</td>
 			</tr>
 		))}
@@ -507,16 +335,18 @@ Outcomes are five distinct things and are kept apart. `OK` is a clean timed row.
 
 </ResearchTable>
 
-Dispatch was probed per row by reading back the kernel flow that actually executed. Of the probed rows, {web.headline.dispatch_mismatch_pct.toFixed(3)}% observed a flow other than the one the call site requested. That number carries a large asterisk: {(100 - web.headline.probed_pct).toFixed(1)}% of cells were never probed, the miss is concentrated on exactly the fast library paths that matter most, and an unprobed row is not a matching row. `P4-fa2` is the clearest case, with {n0(flowN('P4-fa2', 'unprobed'))} unprobed rows against {n0(flowN('P4-fa2', 'flash-attn'))} confirmed as `flash-attn`.
+### Dispatch checks
 
-<ResearchTable long caption="Observed kernel flow per implementation, in rows. Unprobed rows are shown as their own category and are never folded into agreement; the mismatch rate on them is unknown.">
+For each run I recorded which kernel actually executed. Among probed runs, {web.headline.dispatch_mismatch_pct.toFixed(3)}% ran a different kernel than the one requested. {(100 - web.headline.probed_pct).toFixed(1)}% of runs were not probed, mostly on the library paths. `P4-fa2` has {n0(flowN('P4-fa2', 'unprobed'))} unprobed runs and {n0(flowN('P4-fa2', 'flash-attn'))} confirmed as `flash-attn`.
+
+<ResearchTable long caption="Observed kernel per implementation, in runs.">
 
 <table>
 	<thead>
 		<tr>
 			<th>Implementation</th>
-			<th>Observed flows (rows)</th>
-			<th class="num">Unprobed rows</th>
+			<th>Observed kernels (runs)</th>
+			<th class="num">Unprobed runs</th>
 		</tr>
 	</thead>
 	<tbody>
@@ -537,22 +367,20 @@ Dispatch was probed per row by reading back the kernel flow that actually execut
 
 </ResearchTable>
 
-Probe coverage is also uneven across devices, and the device with the thinnest coverage reports the highest mismatch rate, which is the wrong way round for confidence.
-
-<ResearchTable caption="Dispatch probe coverage and mismatch by device. Mismatch is a percentage of probed rows on that device only, so a low mismatch under low coverage says little.">
+<ResearchTable caption="Probe coverage and mismatch rate by GPU. Mismatch is a share of probed runs only.">
 
 <table>
 	<thead>
 		<tr>
 			<th>GPU</th>
-			<th class="num">Rows probed (%)</th>
-			<th class="num">Mismatch of probed (%)</th>
+			<th class="num">Runs probed (%)</th>
+			<th class="num">Mismatch (%)</th>
 		</tr>
 	</thead>
 	<tbody>
 		{web.devices.filter((d) => web.dispatch.by_gpu[d.gpu]).map((d) => (
 			<tr>
-				<td>{d.gpu} {d.cc}</td>
+				<td>{d.gpu}</td>
 				<td class="num">{web.dispatch.by_gpu[d.gpu].probed.toFixed(1)}</td>
 				<td class="num">{web.dispatch.by_gpu[d.gpu].mismatch.toFixed(3)}</td>
 			</tr>
@@ -562,17 +390,19 @@ Probe coverage is also uneven across devices, and the device with the thinnest c
 
 </ResearchTable>
 
-One dispatch result is worth stating on its own. The attention-fusion counter was zero in all {n0(web.dispatch.inductor_rows)} rows where it was captured. However, 45 profiled Inductor rows on H100 contained a flash-attention kernel. These observations distinguish the recorded compiler counter from the kernel that executed. The compiled rows that were probed otherwise report a `triton` flow ({n0(flowN('P1-inductor', 'triton'))} rows for `P1-inductor`), which is generated pointwise and matmul code around the same materialised score matrix.
+TorchInductor's attention-fusion counter read zero in all {n0(web.dispatch.inductor_rows)} runs where it was recorded, yet 45 profiled Inductor runs executed a flash-attention kernel. The counter alone is not a reliable signal of what ran.
 
-Correctness was checked against the reference on a subsample of configurations. No implementation failed.
+### Correctness
 
-<ResearchTable long caption="Numerical agreement against the PyTorch reference. Maximum relative error is dominated by elements where the reference value is near zero and is not a useful summary on its own; maximum absolute error and cosine similarity are. The `vs baseline` column is the ratio of this implementation's error to the reference path's own error under the same comparison.">
+Every implementation was checked against the PyTorch reference on a sample of configurations, and none failed. Relative error is inflated where reference values are near zero, so absolute error and cosine similarity are the useful columns.
+
+<ResearchTable long caption="Numerical agreement with the PyTorch reference. The last-but-one column is the implementation's error divided by the reference path's own error.">
 
 <table>
 	<thead>
 		<tr>
 			<th>Implementation</th>
-			<th class="num">Checked rows</th>
+			<th class="num">Checked runs</th>
 			<th class="num">Max abs err</th>
 			<th class="num">Max rel err</th>
 			<th class="num">Min cosine</th>
@@ -597,113 +427,41 @@ Correctness was checked against the reference on a subsample of configurations. 
 
 </ResearchTable>
 
-### Attribution, and what cannot be attributed
+### Code sources
 
-Before the roofline, the limits of what this data can explain.
-
-> Not collected, and therefore not claimed. {web.not_collected.join(' ')}
-
-There are no hardware counters for any run on any platform in this study. That rules out an occupancy table, a measured-traffic roofline, a launch-overhead fraction, and any statement of the form "this kernel is bound by X" that a profiler would have to support. What follows is a modelled placement of each measured point, and it should be read as a sanity check on the shape of the workload rather than as attribution.
-
-<ResearchFigure
-	number={5}
-	id="fig-roofline"
-	title="Achieved throughput against modelled arithmetic intensity, analytic traffic, no measured roof"
-	dataHref="data/web.json"
-	wide={true}
->
-	<Roofline />
-	<Observation slot="observations">
-		<li>
-			The two regimes separate by orders of magnitude in modelled arithmetic intensity. Decode points sit at
-			{' '}{[...new Set(rlDecode.map((r) => r.ai))].sort((a, b) => a - b).join(', ')} FLOP per byte and prefill points from
-			{' '}{rng(rlPrefill, 'ai')[0]} to {rng(rlPrefill, 'ai')[1]}, over {web.roofline.length} points in total
-			({rlPrefill.length} prefill, {rlDecode.length} decode).
-		</li>
-		<li>
-			Achieved throughput follows that split: decode tops out at {rng(rlDecode, 'tflops')[1].toFixed(2)} TFLOP/s in this
-			slice and prefill reaches {rng(rlPrefill, 'tflops')[1].toFixed(0)} TFLOP/s. That is consistent with decode being
-			traffic-shaped, but it is not evidence of a bandwidth bound, because no bytes were measured.
-		</li>
-		<li>
-			No compute roof and no bandwidth roof is drawn. No peak-FLOP figure was measured on any of these parts, and the x axis
-			is analytic traffic derived from tensor shapes, so a roof line would assert a ceiling this study never observed.
-		</li>
-		<li>
-			Because the byte model is per implementation, a point moving left or right between implementations at the same shape
-			reflects the model as much as the kernel. Compare points within one implementation across shapes, and read
-			cross-implementation horizontal distance as descriptive only.
-		</li>
-	</Observation>
-</ResearchFigure>
-
-### Code sources and modifications
-
-Splitting authored code from integrated code matters here. `P3-triton` is a vendored Triton tutorial kernel with a local BF16 modification, not a kernel written for this project, and no custom CUDA kernel authorship is claimed.
-
-Written for this project: the PyTorch reference (`P0-naive`, `D0-naive-kv`), which materialises the score matrix and exists as a correctness anchor rather than a contender; the `torch.compile` variants (`P1-inductor` with its `nofuse` and `where` spellings, and `D1-inductor`), which are compilation configurations of that reference; and the SDPA call sites (`P2b-sdpa-mem-eff`, `P2c-sdpa-flash`, `P2d-sdpa-cudnn`, `D2-sdpa`), which force one PyTorch backend each and therefore measure the backend PyTorch dispatches into rather than code written here.
-
-Integrated and measured, not authored: `P4-fa2`, `P4h-fa3`, `D3-fa-kvcache`, `D6-fa-prefill-at-1` and `D4-flashinfer` are calls into prebuilt CUDA libraries, flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer}. Nothing inside those paths was modified. Where one of them wins, the finding is about that library build on that device at this software snapshot, and it does not transfer to another version of the same library.
-
-One layout caveat applies to the FlashInfer comparison throughout. The page size in every decode cell equals the KV length by construction, so the FlashInfer and FlashAttention decode entries differ by library, not by KV layout. No page-size sweep was run, and no number here can be read as a cost of one layout against another.
-
-
-
+I wrote the PyTorch reference (`P0-naive`, `D0-naive-kv`), its `torch.compile` variants (`P1-inductor*`, `D1-inductor`) and the SDPA call sites that force one backend each (`P2b`, `P2c`, `P2d`, `D2-sdpa`). `P3-triton` is the Triton tutorial kernel with a small BF16 change. `P4-fa2`, `P4h-fa3`, `D3-fa-kvcache`, `D6-fa-prefill-at-1` and `D4-flashinfer` call the unmodified flash-attn {web.software.flash_attn} and FlashInfer {web.software.flashinfer} libraries.
 
 </details>
 
 <ResearchFigure
 	number={7}
 	id="fig-portability-flip"
-	title={`Winner flip rate per device pair, all comparisons against those meeting the separation criterion, ${web.pairs.length} pairs`}
+	title={`Winner change rate per GPU pair, all configurations against separated ones, ${web.pairs.length} pairs`}
 	dataHref="data/web.json"
 	wide={true}
 >
 	<PortabilityFlip />
 	<Observation slot="observations">
 		<li>
-Forward prefill changes winner on 27 of 64 comparisons that are separated on
-			both GPUs, pooled over the ten Ampere/Ada/Hopper device pairs. Individual
-			pairs are thin once the criterion is applied: A100 against H100 retains only
-			{P('prefill', 'A100', 'H100').n_sep} of {P('prefill', 'A100', 'H100').n}
-			configurations, too few to read as a rate on its own.
+			Counting all configurations makes decode look as unstable as prefill. A100 against L40 changes winner in {pct(P('decode', 'A100', 'L40').flip)} of {P('decode', 'A100', 'L40').n} configurations, but in only {pct(P('decode', 'A100', 'L40').flip_sep)} of the {P('decode', 'A100', 'L40').n_sep} with a clear winner.
 		</li>
 		<li>
-			Decode mostly transfers. A100 against L40 flips on {pct(P('decode', 'A100', 'L40').flip_sep)} of
-			{' '}{P('decode', 'A100', 'L40').n_sep} separated cells against {pct(P('decode', 'A100', 'L40').flip)} of
-			{' '}{P('decode', 'A100', 'L40').n} raw, and A100 against H100 on {pct(P('decode', 'A100', 'H100').flip_sep)} of
-			{' '}{P('decode', 'A100', 'H100').n_sep} against {pct(P('decode', 'A100', 'H100').flip)} of
-			{' '}{P('decode', 'A100', 'H100').n} raw. The raw rates alone would have said decode is as unstable as prefill; the
-			restriction is what separates the two regimes. Both of these pairs also cross the commit and driver split, so the
-			transfer is measured against a confound rather than a clean device swap.
-		</li>
-		<li>
-			Same-architecture pairs are not automatically safe. L40 against L40S in prefill, two sm89 parts, flips on
-			{' '}{pct(P('prefill', 'L40', 'L40S').flip_sep)} of only {P('prefill', 'L40', 'L40S').n_sep} separated cells
-			({pct(P('prefill', 'L40', 'L40S').flip)} of {P('prefill', 'L40', 'L40S').n} raw). That separated denominator is too
-			small to carry a conclusion, and the two parts sit on different driver builds ({dev('L40').driver} against
-			{' '}{dev('L40S').driver}). The comparison does not isolate device effects from driver and host effects.
-		</li>
-		<li>
-			Every rate here is a fraction of cells within one device pair, in one regime, at one software snapshot, over
-			{' '}{web.headline.devices} GPUs; separated denominators across the {web.pairs.length} pairs range from
-			{' '}{Math.min(...web.pairs.map((p) => p.n_sep))} to {Math.max(...web.pairs.map((p) => p.n_sep))} cells. Pairs holding a
-			handful of separated cells are shown for completeness and should not be ranked against pairs holding dozens.
+			Individual pairs get small once the rule is applied. A100 against H100 prefill keeps only {P('prefill', 'A100', 'H100').n_sep} of {P('prefill', 'A100', 'H100').n} configurations, and L40 against L40S keeps {P('prefill', 'L40', 'L40S').n_sep}. Pairs with a handful of separated configurations should not be read as rates.
 		</li>
 	</Observation>
 </ResearchFigure>
 
-<ResearchTable long caption={`All ${web.pairs.length} device pairs. Flip (all) is over every matched cell in the pair; flip (separated) is over the cells where the winner clears both the bootstrap CI and the ${thr}% threshold. Decode pairs cross the commit and driver split described above; prefill pairs do not.`}>
+<ResearchTable long caption={`All ${web.pairs.length} GPU pairs. "All" counts every shared configuration. "Separated" counts only those with a clear winner on both GPUs.`}>
 
 <table>
 	<thead>
 		<tr>
 			<th>Regime</th>
 			<th>Pair</th>
-			<th class="num">Cells</th>
-			<th class="num">Flip, all (%)</th>
-			<th class="num">Separated cells</th>
-			<th class="num">Flip, separated (%)</th>
+			<th class="num">Configs</th>
+			<th class="num">Change, all (%)</th>
+			<th class="num">Separated</th>
+			<th class="num">Change, separated (%)</th>
 		</tr>
 	</thead>
 	<tbody>
@@ -721,4 +479,3 @@ Forward prefill changes winner on 27 of 64 comparisons that are separated on
 </table>
 
 </ResearchTable>
-

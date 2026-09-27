@@ -183,10 +183,8 @@ const { id = 'fig-prefill-latency' } = Astro.props;
 			const s = data.prefill_slice;
 			fig.querySelector<HTMLElement>('[data-caption]')!.textContent =
 				`Slice: batch ${s.batch}, head dim ${s.head_dim}, ${s.dtype}, ${s.mode} pass. ` +
-				`Each point is the median over the timed repeats of one (implementation, GPU, N) cell, ` +
-				`and panels run in compute-capability order. An implementation with no line in a panel ` +
-				`returned no timed run for that cell; the coverage table keeps unsupported, predicted-OOM ` +
-				`and OOM apart rather than merging them.`;
+				`Each point is the median over repeats. A missing line means that implementation did not ` +
+				`run on that GPU.`;
 
 			const draw = () => {
 				const metric = select.value as Metric;

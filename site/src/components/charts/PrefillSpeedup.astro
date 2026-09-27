@@ -207,24 +207,15 @@ const { id = 'fig-prefill-speedup' } = Astro.props;
 				})
 			);
 
-			const s = data.prefill_slice;
-			const prefill = data.separation.by_regime.prefill;
 			const threshold = ((data.separation.practical_threshold - 1) * 100).toFixed(0);
 
 			const draw = () => {
 				const n = render(plotEl, fig, data, select.value);
 				caption.textContent =
-					`Each cell is the median latency of ${select.value} divided by the median latency of the ` +
-					`forced SDPA-flash baseline at the same GPU, batch and sequence length; above 1.0 is faster ` +
-					`than that baseline. ${n} cells are drawn for this implementation, out of ${all.length} in ` +
-					`the prefill slice. Hover a cell for the ratio and both absolute medians, since a ratio on ` +
-					`its own does not say whether the gap is 5 us or 5 ms. Slice: head dim ${s.head_dim}, ` +
-					`${s.dtype}, ${s.mode} pass, prefill only, torch ${data.software.torch} on CUDA ` +
-					`${data.software.cuda}. A blank cell is a shape with no timed pair, not a tie; the coverage ` +
-					`table keeps unsupported, predicted-OOM and OOM apart rather than merging them. Across the ` +
-					`prefill grid only ${(100 * prefill.separated).toFixed(1)}% of ${prefill.n} cells have a ` +
-					`winner that the bootstrap CI and the ${threshold}% practical threshold both separate from ` +
-					`second place, so a cell within about ${threshold}% of 1.0 is not a measured difference.`;
+					`SDPA-flash latency divided by ${select.value} latency at the same GPU, batch and sequence ` +
+					`length. Above 1.0 means ${select.value} is faster. ${n} of ${all.length} cells have data. ` +
+					`Hover a cell for both latencies. Values within about ${threshold}% of 1.0 are not a ` +
+					`clear difference.`;
 			};
 			draw();
 			select.addEventListener('change', draw);

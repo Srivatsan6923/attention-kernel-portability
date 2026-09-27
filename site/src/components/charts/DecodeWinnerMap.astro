@@ -65,23 +65,10 @@ const s = web.decode_slice;
 
 	<Observation slot="observations">
 		<li>
-			Each cell is the implementation with the lowest median latency at that batch and KV length;
-			{rows.length} cells over {gpus.length} GPUs are shown, and {impls.length} implementations ({impls.join(', ')})
-			take at least one cell. Colour is the fastest median only. Over the full decode grid of {dec.n} cells,
-			{pct1(dec.separated)}% have a winner that both the bootstrap CI and the {threshold}% practical
-			threshold separate from second place, and the median winner leads by {lead}%. Most cells here have
-			no separated winner, so a colour change between neighbouring cells is not by itself a real difference.
-		</li>
-		<li>
-			Comparing panels mixes hardware with software snapshot. The A10 and A100 decode rows were collected
-			at a different commit and driver than the H100 and L40 rows, so a panel-to-panel change in the winner
-			is confounded and cannot be read as an architecture effect on its own.
-		</li>
-		<li>
-			Hover a cell for the implementation and its median microseconds. The latency is carried with the
-			winner because a winner label without its absolute cost says nothing about the size of the gap.
-			Every claim here is scoped to this slice: decode, hkv={s.hkv}, head_dim={s.head_dim}, {s.dtype},
-			on these GPUs at this software snapshot.
+			Each cell shows the implementation with the lowest median latency at that batch and KV length.
+			{impls.length} implementations ({impls.join(', ')}) win at least one of the {rows.length} cells.
+			Only {pct1(dec.separated)}% of the full decode grid has a clear winner, so a colour change between
+			neighbouring cells is often not a real difference. Hover a cell for its latency.
 		</li>
 	</Observation>
 </ResearchFigure>
